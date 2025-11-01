@@ -1,0 +1,13 @@
+re4/
+├─ main.py
+├─ app/
+│ ├─ ui.py
+│ ├─ auth.py
+│ ├─ sales.py
+│ └─ inventory.py
+├─ data/
+│ └─ database.db
+├─ assets/
+│ └─ logo.png
+├─ requirements.txt
+└─ README.md
