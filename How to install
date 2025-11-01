@@ -1,0 +1,51 @@
+re4/
+├─ main.py
+├─ app/
+│ ├─ ui.py
+│ ├─ auth.py
+│ ├─ sales.py
+│ └─ inventory.py
+├─ data/
+│ └─ database.db
+├─ assets/
+│ └─ logo.png
+├─ requirements.txt
+└─ README.md
+
+  > Replace the structure above with actual filenames if they differ.
+
+---
+
+## ⚙️ Installation & Run (Windows / macOS / Linux)
+
+### 1) Clone the repo
+```bash
+git clone https://github.com/USERNAME/REPO_NAME.git
+cd REPO_NAME
+
+2) (Optional) Create a virtual environment
+
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# macOS / Linux
+source venv/bin/activate
+
+3) Install requirements
+
+pip install -r requirements.txt
+(If you don't have requirements.txt, install common libs: pip install customtkinter reportlab — plus any others your code imports.)
+
+4) Run the application
+
+python main.py
+⚙️ Build a Windows .exe (optional)
+
+If you want to create a distributable Windows executable:
+
+Install PyInstaller:
+
+pip install pyinstaller
+pyinstaller --onefile --windowed main.py
+
+  
