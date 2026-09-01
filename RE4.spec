@@ -24,15 +24,25 @@ a = Analysis(
         "reportlab",
         "reportlab.pdfgen",
         "reportlab.pdfbase._fontdata",
+        # Barcode symbologies are looked up by name at runtime, so PyInstaller
+        # cannot see the import and would leave label printing broken.
+        "reportlab.graphics.barcode",
+        "reportlab.graphics.barcode.code128",
+        "reportlab.graphics.barcode.common",
         "sqlite3",
         "tkinter",
         "tkinter.filedialog",
         "tkinter.messagebox",
+        # Product thumbnails come through Pillow, which CustomTkinter also uses.
+        "PIL.Image",
+        "PIL.ImageTk",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=["pytest", "numpy", "matplotlib", "PIL.ImageQt"],
+    # Backups, images and logs are written next to the executable at runtime for
+    # the same reason as the database, so none of those folders are bundled.
     noarchive=False,
     optimize=0,
 )
