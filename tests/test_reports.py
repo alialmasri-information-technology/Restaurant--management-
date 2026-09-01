@@ -8,6 +8,7 @@ from app import receipts
 from app.services import customers as customers_service
 from app.services import products as products_service
 from app.services import reports as service
+from app.services import returns as returns_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
 from tests.support import DatabaseTestCase
@@ -54,7 +55,7 @@ class SummaryTests(ReportTestCase):
         self.assertEqual(summary["revenue"], 15.0)
         self.assertEqual(summary["gross_profit"], 7.0)  # 20 - 8 cost - 5 discount
 
-    def test_refunded_sales_are_excluded_from_revenue(self):
+    def test_a_full_refund_is_netted_off_revenue(self):
         sale_id = self.sell(self.widget, 2)
         self.sell(self.gadget, 1)
         sales_service.refund_sale(sale_id, self.admin.user_id)
@@ -63,6 +64,38 @@ class SummaryTests(ReportTestCase):
         self.assertEqual(summary["revenue"], 2.0)
         self.assertEqual(summary["refund_count"], 1)
         self.assertEqual(summary["refund_total"], 20.0)
+
+    def test_a_partial_return_only_nets_off_the_units_that_came_back(self):
+        sale_id = self.sell(self.widget, 3)   # $30 revenue, $12 cost
+        line = returns_service.returnable_lines(sale_id)[0]["sale_item_id"]
+        returns_service.create_return(sale_id, self.admin.user_id, {line: 1})
+
+        summary = service.summary()
+        # The invoice is still a sale; only the returned unit leaves the numbers.
+        self.assertEqual(summary["sale_count"], 1)
+        self.assertEqual(summary["gross_revenue"], 30.0)
+        self.assertEqual(summary["revenue"], 20.0)
+        self.assertEqual(summary["units"], 2)
+        self.assertEqual(summary["gross_profit"], 12.0)
+        self.assertEqual(summary["refund_total"], 10.0)
+
+    def test_a_returned_unit_leaves_the_product_ranking(self):
+        sale_id = self.sell(self.widget, 3)
+        line = returns_service.returnable_lines(sale_id)[0]["sale_item_id"]
+        returns_service.create_return(sale_id, self.admin.user_id, {line: 2})
+        top = service.top_products()
+        self.assertEqual(top[0]["units"], 1)
+        self.assertEqual(top[0]["revenue"], 10.0)
+
+    def test_returns_are_grouped_by_reason(self):
+        sale_id = self.sell(self.widget, 2)
+        line = returns_service.returnable_lines(sale_id)[0]["sale_item_id"]
+        returns_service.create_return(
+            sale_id, self.admin.user_id, {line: 1}, reason="Faulty"
+        )
+        breakdown = service.returns_breakdown()
+        self.assertEqual(breakdown[0]["reason"], "Faulty")
+        self.assertEqual(breakdown[0]["refunded"], 10.0)
 
     def test_empty_period_returns_zeros(self):
         summary = service.summary("2000-01-01", "2000-01-31")
