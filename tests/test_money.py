@@ -92,5 +92,22 @@ class ParsingTests(unittest.TestCase):
             parse_int("2.5", "qty")
 
 
+
+class NegativeFormattingTests(unittest.TestCase):
+    """A till variance is the one place these are seen, and $-5.00 looks broken."""
+
+    def test_a_negative_amount_puts_the_sign_before_the_symbol(self):
+        self.assertEqual(fmt_usd("-5"), "-$5.00")
+        self.assertEqual(fmt_lbp("-5000"), "-5,000 LBP")
+
+    def test_positive_amounts_are_unchanged(self):
+        self.assertEqual(fmt_usd("5"), "$5.00")
+        self.assertEqual(fmt_lbp("5000"), "5,000 LBP")
+
+    def test_zero_carries_no_sign(self):
+        self.assertEqual(fmt_usd(0), "$0.00")
+        self.assertEqual(fmt_lbp(0), "0 LBP")
+
+
 if __name__ == "__main__":
     unittest.main()

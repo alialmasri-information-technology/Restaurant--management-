@@ -45,11 +45,16 @@ def to_lbp(usd_amount, rate, step=1000) -> Decimal:
 
 
 def fmt_usd(value) -> str:
-    return f"${usd(value):,.2f}"
+    """Money for display. A negative amount reads -$5.00, never $-5.00."""
+    amount = usd(value)
+    sign = "-" if amount < ZERO else ""
+    return f"{sign}${abs(amount):,.2f}"
 
 
 def fmt_lbp(value) -> str:
-    return f"{D(value):,.0f} LBP"
+    amount = D(value)
+    sign = "-" if amount < ZERO else ""
+    return f"{sign}{abs(amount):,.0f} LBP"
 
 
 def parse_amount(text, field="amount") -> Decimal:
