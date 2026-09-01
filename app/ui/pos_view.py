@@ -10,10 +10,20 @@ from app.services import customers as customers_service
 from app.services import products as products_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
+from app.services import shifts as shifts_service
 from app.ui import theme
 from app.ui.receipt_actions import offer_receipt
 from app.ui.shell import PageHeader
-from app.ui.widgets import Card, DataTable, SectionTitle, ask_confirm, show_error
+from app.ui.widgets import (
+    Card,
+    DataTable,
+    FormModal,
+    Modal,
+    SectionTitle,
+    ask_confirm,
+    show_error,
+    show_info,
+)
 
 WALK_IN = "Walk-in customer"
 
@@ -25,16 +35,53 @@ class PosView(ctk.CTkFrame):
         self.cart = sales_service.Cart()
         self._customers: list = []
         self._categories: list = []
+        self._thumbnails: dict = {}
 
         self.grid_columnconfigure(0, weight=3, uniform="pos")
         self.grid_columnconfigure(1, weight=2, uniform="pos")
         self.grid_rowconfigure(1, weight=1)
 
-        header = PageHeader(self, "New Sale", "Search a product, then press Enter or double-click to add it")
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=24, pady=(20, 14))
+        self.header = PageHeader(
+            self, "New Sale",
+            "Scan or search, then press Enter. F2 parks the sale, F4 completes it.",
+        )
+        self.header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=24, pady=(20, 14))
+
+        ctk.CTkButton(
+            self.header.actions, text="Park sale", width=110, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._park_sale,
+        ).grid(row=0, column=0, padx=(0, 8))
+        self.parked_button = ctk.CTkButton(
+            self.header.actions, text="Parked", width=110, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._open_parked,
+        )
+        self.parked_button.grid(row=0, column=1)
 
         self._build_catalogue()
         self._build_cart()
+        self._bind_shortcuts()
+
+    def _bind_shortcuts(self) -> None:
+        """Till work is keyboard work; the mouse should be optional."""
+        root = self.winfo_toplevel()
+        for sequence, handler in (
+            ("<F2>", self._park_sale),
+            ("<F3>", self._open_parked),
+            ("<F4>", self._complete_sale),
+            ("<F6>", self._prompt_qty),
+            ("<F7>", self._prompt_line_discount),
+            ("<F8>", self._prompt_price),
+            ("<Control-l>", lambda: self.search_entry.focus_set()),
+        ):
+            root.bind(sequence, lambda _event, run=handler: self._shortcut(run))
+
+    def _shortcut(self, handler):
+        """Only act when this screen is the one on show."""
+        if self.winfo_ismapped():
+            handler()
+        return "break"
 
     # ------------------------------------------------------------------ #
     # Catalogue side
@@ -44,6 +91,7 @@ class PosView(ctk.CTkFrame):
         card = Card(self)
         card.grid(row=1, column=0, sticky="nsew", padx=(24, 12), pady=(0, 24))
         card.grid_rowconfigure(2, weight=1)
+        card.grid_rowconfigure(3, minsize=64)
         card.grid_columnconfigure(0, weight=1)
 
         SectionTitle(card, "Products").grid(
@@ -84,9 +132,66 @@ class PosView(ctk.CTkFrame):
             fg_color="transparent",
         )
         self.products.set_formatter("price_usd", lambda value, _row: fmt_usd(value))
-        self.products.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 12))
+        self.products.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 6))
         self.products.on_double_click(self._add_selected)
         self.products.on_return(self._add_selected)
+        self.products.on_select(self._show_preview)
+
+        preview = ctk.CTkFrame(card, fg_color="transparent", height=64)
+        preview.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 12))
+        preview.grid_columnconfigure(1, weight=1)
+        preview.grid_propagate(False)
+
+        self.preview_image = ctk.CTkLabel(preview, text="", width=56, height=56)
+        self.preview_image.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 10))
+        self.preview_name = ctk.CTkLabel(
+            preview, text="", font=theme.font(13, "bold"),
+            text_color=theme.TEXT, anchor="w",
+        )
+        self.preview_name.grid(row=0, column=1, sticky="ew")
+        self.preview_detail = ctk.CTkLabel(
+            preview, text="Select a product to see its details.", font=theme.font(11),
+            text_color=theme.TEXT_MUTED, anchor="w",
+        )
+        self.preview_detail.grid(row=1, column=1, sticky="ew")
+
+    def _show_preview(self) -> None:
+        product_id = self.products.selected_int()
+        product = products_service.get_product(product_id) if product_id else None
+        if product is None:
+            self.preview_name.configure(text="")
+            self.preview_detail.configure(text="Select a product to see its details.")
+            self.preview_image.configure(image=None, text="")
+            return
+
+        self.preview_name.configure(text=product["name"])
+        detail = f"{fmt_usd(product['price_usd'])}  ·  {product['stock_qty']} in stock"
+        if product["barcode"]:
+            detail += f"  ·  {product['barcode']}"
+        self.preview_detail.configure(text=detail)
+        self.preview_image.configure(image=self._thumbnail(product), text="")
+
+    def _thumbnail(self, product):
+        """A small picture of the product, or nothing if it has none.
+
+        Pillow arrives with CustomTkinter, but a corrupt or exotic file must not
+        take the till down, so any failure just leaves the slot empty.
+        """
+        path = products_service.image_file(product["image_path"])
+        if path is None:
+            return None
+        cached = self._thumbnails.get(str(path))
+        if cached is not None:
+            return cached
+        try:
+            from PIL import Image
+
+            image = Image.open(path)
+            thumbnail = ctk.CTkImage(light_image=image, dark_image=image, size=(56, 56))
+        except Exception:  # noqa: BLE001 - a bad image is not worth an error dialog
+            return None
+        self._thumbnails[str(path)] = thumbnail
+        return thumbnail
 
     def _reload_products(self) -> None:
         category_id = None
@@ -105,10 +210,10 @@ class PosView(ctk.CTkFrame):
         )
 
     def _add_from_search(self) -> None:
-        """Enter adds an exact SKU match (barcode scanners type + press Enter)."""
+        """Enter adds an exact code match (a scanner types, then presses Enter)."""
         term = self.search_var.get().strip()
         if term:
-            product = products_service.get_by_sku(term)
+            product = products_service.get_by_code(term)
             if product is not None:
                 self._add_product(product)
                 self.search_var.set("")
@@ -145,15 +250,16 @@ class PosView(ctk.CTkFrame):
         card.grid_columnconfigure(0, weight=1)
 
         self.cart_title = SectionTitle(card, "Cart")
-        self.cart_title.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 8))
+        self.cart_title.grid(row=0, column=0, sticky="ew", padx=16, pady=(10, 6))
 
         self.cart_table = DataTable(
             card,
             columns=[
-                ("name", "Item", 140, "w"),
-                ("qty", "Qty", 45, "center"),
-                ("unit_price", "Unit", 68, "e"),
-                ("line_total", "Total", 78, "e"),
+                ("name", "Item", 130, "w"),
+                ("qty", "Qty", 42, "center"),
+                ("unit_price", "Unit", 64, "e"),
+                ("discount", "Off", 52, "e"),
+                ("line_total", "Total", 72, "e"),
             ],
             id_key="product_id",
             height=8,
@@ -162,23 +268,35 @@ class PosView(ctk.CTkFrame):
         )
         self.cart_table.set_formatter("unit_price", lambda value, _row: fmt_usd(value))
         self.cart_table.set_formatter("line_total", lambda value, _row: fmt_usd(value))
+        self.cart_table.set_formatter(
+            "discount", lambda value, _row: f"-{fmt_usd(value)}" if value else ""
+        )
         self.cart_table.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 6))
 
         line_actions = ctk.CTkFrame(card, fg_color="transparent")
-        line_actions.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 6))
+        line_actions.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 4))
         for column in range(4):
             line_actions.grid_columnconfigure(column, weight=1)
-        for column, (label, command, colour) in enumerate((
-            ("−", lambda: self._bump(-1), theme.NEUTRAL),
-            ("+", lambda: self._bump(1), theme.NEUTRAL),
-            ("Set qty", self._prompt_qty, theme.NEUTRAL),
-            ("Remove", self._remove_line, theme.DANGER),
-        )):
+        specs = [
+            ("-", lambda: self._bump(-1), theme.NEUTRAL, 0),
+            ("+", lambda: self._bump(1), theme.NEUTRAL, 0),
+            ("Qty", self._prompt_qty, theme.NEUTRAL, 0),
+            ("Remove", self._remove_line, theme.DANGER, 0),
+            ("Price", self._prompt_price, theme.NEUTRAL, 1),
+            ("Line off", self._prompt_line_discount, theme.NEUTRAL, 1),
+            ("Note", self._prompt_note, theme.NEUTRAL, 1),
+            ("Clear", self._clear_cart, theme.NEUTRAL, 1),
+        ]
+        # A second row of line actions costs height the cart card does not have
+        # to spare, so everything below it is a notch tighter.
+        for index, (label, command, colour, row) in enumerate(specs):
             ctk.CTkButton(
-                line_actions, text=label, height=30, command=command,
-                fg_color=colour,
+                line_actions, text=label, height=26, command=command,
+                font=theme.font(12), fg_color=colour,
                 hover_color=theme.DANGER_HOVER if colour == theme.DANGER else theme.NEUTRAL_HOVER,
-            ).grid(row=0, column=column, padx=2, sticky="ew")
+            ).grid(row=row, column=index % 4, padx=2, pady=1, sticky="ew")
+        for spec_row in (0, 1):
+            line_actions.grid_rowconfigure(spec_row, minsize=30)
 
         # Two columns rather than four stacked rows: the cart table needs the height.
         form = ctk.CTkFrame(card, fg_color="transparent")
@@ -223,7 +341,7 @@ class PosView(ctk.CTkFrame):
         ).grid(row=0, column=1, padx=(6, 0))
 
         totals = Card(card, fg_color=theme.SURFACE_ALT, border_width=0)
-        totals.grid(row=4, column=0, sticky="ew", padx=12, pady=(6, 0))
+        totals.grid(row=4, column=0, sticky="ew", padx=12, pady=(4, 0))
         totals.grid_columnconfigure(1, weight=1)
 
         self.total_labels = {}
@@ -237,8 +355,8 @@ class PosView(ctk.CTkFrame):
             ("change", "Change", 11, 13, "bold", theme.SUCCESS),
         )
         for index, (key, label, label_size, value_size, weight, colour) in enumerate(rows):
-            top = 8 if index == 0 else 1
-            bottom = 8 if index == len(rows) - 1 else 0
+            top = 5 if index == 0 else 1
+            bottom = 5 if index == len(rows) - 1 else 0
             ctk.CTkLabel(
                 totals, text=label, font=theme.font(label_size, weight),
                 text_color=theme.TEXT_MUTED, anchor="w",
@@ -253,16 +371,16 @@ class PosView(ctk.CTkFrame):
             self.total_labels[key] = value_label
 
         buttons = ctk.CTkFrame(card, fg_color="transparent")
-        buttons.grid(row=5, column=0, sticky="ew", padx=12, pady=(10, 12))
+        buttons.grid(row=5, column=0, sticky="ew", padx=12, pady=(6, 8))
         buttons.grid_columnconfigure(0, weight=1)
         buttons.grid_columnconfigure(1, weight=2)
 
         ctk.CTkButton(
-            buttons, text="Clear", height=42, command=self._clear_cart,
+            buttons, text="Clear", height=38, command=self._clear_cart,
             fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
         ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.complete_button = ctk.CTkButton(
-            buttons, text="Complete Sale", height=42, font=theme.font(15, "bold"),
+            buttons, text="Complete Sale", height=38, font=theme.font(15, "bold"),
             fg_color=theme.SUCCESS, hover_color=theme.SUCCESS_HOVER,
             command=self._complete_sale,
         )
@@ -274,7 +392,7 @@ class PosView(ctk.CTkFrame):
         cell = ctk.CTkFrame(parent, fg_color="transparent")
         cell.grid(
             row=row, column=column, sticky="ew",
-            padx=(0, 6) if column == 0 else (6, 0), pady=(0, 6),
+            padx=(0, 6) if column == 0 else (6, 0), pady=(0, 4),
         )
         cell.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
@@ -302,8 +420,6 @@ class PosView(ctk.CTkFrame):
         self._render_cart()
 
     def _prompt_qty(self) -> None:
-        from app.ui.widgets import FormModal
-
         line = self._selected_line()
         if line is None:
             return
@@ -328,6 +444,164 @@ class PosView(ctk.CTkFrame):
             show_error(self, exc, "Not enough stock")
         self._render_cart()
 
+    def _prompt_price(self) -> None:
+        """Override a line price. Recorded in the audit trail by the service."""
+        line = self._selected_line()
+        if line is None:
+            return
+        if not settings_service.allow_price_override():
+            show_error(
+                self,
+                "Price overrides are switched off in Settings.",
+                "Not allowed",
+            )
+            return
+
+        dialog = FormModal(
+            self,
+            f"Price — {line.name}",
+            [
+                {"key": "list_price", "label": "Catalogue price", "type": "readonly",
+                 "value": fmt_usd(line.list_price)},
+                {"key": "price", "label": "Price to charge (USD)",
+                 "value": f"{line.unit_price:.2f}",
+                 "hint": "Every override is written to the audit log."},
+            ],
+            submit_text="Use this price",
+        )
+        values = dialog.wait_result()
+        if not values:
+            return
+        try:
+            self.cart.set_price(line.product_id, parse_amount(values["price"], "price"))
+        except (ValueError, sales_service.SaleError) as exc:
+            show_error(self, exc, "Could not change the price")
+        self._render_cart()
+
+    def _prompt_line_discount(self) -> None:
+        line = self._selected_line()
+        if line is None:
+            return
+        dialog = FormModal(
+            self,
+            f"Discount — {line.name}",
+            [
+                {"key": "line_value", "label": "Line before discount", "type": "readonly",
+                 "value": fmt_usd(line.gross_total)},
+                {"key": "amount", "label": "Amount off (USD)",
+                 "value": f"{line.discount:.2f}" if line.discount else ""},
+                {"key": "percent", "label": "or percent off",
+                 "value": "", "hint": "Fill in one or the other, not both."},
+            ],
+            submit_text="Apply",
+        )
+        values = dialog.wait_result()
+        if not values:
+            return
+        try:
+            amount = values["amount"].strip()
+            percent = values["percent"].strip()
+            self.cart.set_line_discount(
+                line.product_id,
+                amount=parse_amount(amount, "amount off") if amount else None,
+                percent=parse_amount(percent, "percent off") if percent else None,
+            )
+        except (ValueError, sales_service.SaleError) as exc:
+            show_error(self, exc, "Could not apply the discount")
+        self._render_cart()
+
+    def _prompt_note(self) -> None:
+        dialog = FormModal(
+            self, "Note on this sale",
+            [{"key": "note", "label": "Note (printed on the receipt)",
+              "type": "text", "value": self.cart.note}],
+            submit_text="Save note",
+        )
+        values = dialog.wait_result()
+        if values is not None:
+            self.cart.note = values["note"]
+
+    # ------------------------------------------------------------------ #
+    # Parking
+    # ------------------------------------------------------------------ #
+
+    def _park_sale(self) -> None:
+        if self.cart.is_empty:
+            show_error(self, "There is nothing in the cart to park.", "Nothing to park")
+            return
+        dialog = FormModal(
+            self, "Park this sale",
+            [{"key": "label", "label": "Name it so you can find it again",
+              "placeholder": "e.g. blue jacket, back in 5"}],
+            submit_text="Park",
+        )
+        values = dialog.wait_result()
+        if values is None:
+            return
+        try:
+            sales_service.park_sale(
+                self.cart, self.shell.user.user_id, values["label"]
+            )
+        except sales_service.SaleError as exc:
+            show_error(self, exc, "Could not park the sale")
+            return
+
+        self.cart = sales_service.Cart()
+        self.discount_var.set("0")
+        self.paid_var.set("")
+        self._render_cart()
+        self._refresh_parked_button()
+
+    def _open_parked(self) -> None:
+        parked = sales_service.list_parked()
+        if not parked:
+            show_info(self, "No sales are being held.", "Nothing parked")
+            return
+        if not self.cart.is_empty and not ask_confirm(
+            self,
+            "The current cart will be cleared when you resume a held sale.\n\n"
+            "Park or complete it first if you want to keep it.\n\nContinue?",
+            "Resume a held sale",
+        ):
+            return
+
+        modal = ParkedModal(self, parked)
+        parked_id = modal.wait_result()
+        if parked_id is None:
+            self._refresh_parked_button()
+            return
+
+        try:
+            cart = sales_service.resume_parked(parked_id)
+        except sales_service.SaleError as exc:
+            show_error(self, exc, "Could not resume the sale")
+            self._refresh_parked_button()
+            return
+
+        self.cart = cart
+        self.discount_var.set(f"{cart.discount:.2f}")
+        self.paid_var.set("")
+        if cart.customer_id is not None:
+            label = next(
+                (
+                    _customer_label(customer) for customer in self._customers
+                    if customer["customer_id"] == cart.customer_id
+                ),
+                None,
+            )
+            if label:
+                self.customer_var.set(label)
+        self._render_cart()
+        self._refresh_parked_button()
+
+        if cart.unavailable:
+            show_info(
+                self,
+                "These lines could not be restored:\n\n"
+                + "\n".join(f"  {name}" for name in cart.unavailable),
+                "Some items were dropped",
+            )
+
     def _remove_line(self) -> None:
         product_id = self.cart_table.selected_int()
         if product_id is not None:
@@ -337,6 +611,7 @@ class PosView(ctk.CTkFrame):
     def _clear_cart(self) -> None:
         if self.cart.is_empty or ask_confirm(self, "Empty the cart?", "Clear sale"):
             self.cart.clear()
+            self.cart.note = ""
             self.discount_var.set("0")
             self.paid_var.set("")
             self._render_cart()
@@ -370,11 +645,16 @@ class PosView(ctk.CTkFrame):
                 "name": line.name,
                 "qty": line.qty,
                 "unit_price": line.unit_price,
+                "discount": line.discount,
                 "line_total": line.line_total,
             }
             for line in self.cart.lines
         ]
-        self.cart_table.set_rows(rows, empty_message="Cart is empty.")
+        self.cart_table.set_rows(
+            rows,
+            tag_func=lambda row: "warning" if row["discount"] else (),
+            empty_message="Cart is empty.",
+        )
         self.cart_title.configure(
             text=f"Cart · {self.cart.item_count} item{'s' if self.cart.item_count != 1 else ''}"
         )
@@ -441,6 +721,7 @@ class PosView(ctk.CTkFrame):
                 payment_method=self.method_var.get(),
                 paid_currency=self.currency_var.get(),
                 amount_paid=paid,
+                note=self.cart.note,
             )
         except sales_service.SaleError as exc:
             show_error(self, exc, "Sale not completed")
@@ -451,6 +732,7 @@ class PosView(ctk.CTkFrame):
 
         sale = sales_service.get_sale(sale_id)
         self.cart.clear()
+        self.cart.note = ""
         self.discount_var.set("0")
         self.paid_var.set("")
         self.search_var.set("")
@@ -482,9 +764,94 @@ class PosView(ctk.CTkFrame):
 
         self._reload_products()
         self._render_cart()
+        self._refresh_parked_button()
+        self._check_till()
         self.after(100, self.search_entry.focus_set)
+
+    def _check_till(self) -> None:
+        """Say so up front when the till is shut, rather than at checkout."""
+        if not shifts_service.shift_required() or shifts_service.current_shift():
+            self.complete_button.configure(state="normal")
+            return
+        self.complete_button.configure(state="disabled")
+        self.header.set_subtitle(
+            "The till is closed. Open a shift on the Till screen before selling."
+        )
+
+    def _refresh_parked_button(self) -> None:
+        count = len(sales_service.list_parked())
+        self.parked_button.configure(
+            text=f"Parked ({count})" if count else "Parked",
+            state="normal" if count else "disabled",
+        )
 
 
 def _customer_label(customer) -> str:
     phone = customer["phone"]
     return f"{customer['name']} ({phone})" if phone else customer["name"]
+
+
+class ParkedModal(Modal):
+    """Pick a held sale to bring back, or throw one away."""
+
+    def __init__(self, parent, parked):
+        super().__init__(parent, "Held sales", 560, 420)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        SectionTitle(self, "Sales being held").grid(
+            row=0, column=0, sticky="ew", padx=18, pady=(18, 8)
+        )
+
+        self.table = DataTable(
+            self,
+            columns=[
+                ("label", "Name", 220, "w"),
+                ("username", "Parked by", 110, "w"),
+                ("parked_at", "When", 150, "w"),
+            ],
+            id_key="parked_id",
+            height=9,
+        )
+        self.table.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 10))
+        self.table.on_double_click(self.submit)
+        self.reload(parked)
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            footer, text="Discard", width=110, height=36,
+            fg_color=theme.DANGER, hover_color=theme.DANGER_HOVER,
+            command=self.discard,
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(
+            footer, text="Cancel", width=100, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self.on_cancel,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ctk.CTkButton(
+            footer, text="Resume", width=130, height=36, command=self.submit
+        ).grid(row=0, column=2)
+
+    def reload(self, parked=None) -> None:
+        rows = sales_service.list_parked() if parked is None else parked
+        self.table.set_rows(rows, empty_message="Nothing is being held.")
+        self.table.select_first()
+
+    def discard(self) -> None:
+        parked_id = self.table.selected_int()
+        if parked_id is None:
+            return
+        if not ask_confirm(self, "Throw this held sale away?", "Discard held sale"):
+            return
+        sales_service.delete_parked(parked_id)
+        self.reload()
+
+    def submit(self) -> None:
+        parked_id = self.table.selected_int()
+        if parked_id is None:
+            return
+        self.result = parked_id
+        self.grab_release()
+        self.destroy()

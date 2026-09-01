@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import customtkinter as ctk
 
-from app import auth, config, db
+from app import auth, config, db, printing
 from app.money import D, fmt_lbp, fmt_usd, parse_amount, to_lbp
+from app.services import audit as audit_service
+from app.services import backups as backups_service
 from app.services import settings as settings_service
 from app.ui import theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,
+    DataTable,
     FormModal,
     LabeledEntry,
+    Modal,
     SectionTitle,
     ask_confirm,
     show_error,
@@ -20,6 +26,8 @@ from app.ui.widgets import (
 )
 
 APPEARANCES = ("System", "Light", "Dark")
+SYSTEM_PRINTER = "System default"
+RECEIPT_WIDTH_LABELS = {"58": "58 mm roll", "80": "80 mm roll"}
 
 
 def _trim(value) -> str:
@@ -42,6 +50,8 @@ class SettingsView(ctk.CTkScrollableFrame):
 
         self._build_store_card()
         self._build_currency_card()
+        self._build_printing_card()
+        self._build_data_card()
         self._build_account_card()
 
     # ------------------------------------------------------------------ #
@@ -112,9 +122,131 @@ class SettingsView(ctk.CTkScrollableFrame):
             command=self._save_currency,
         ).grid(row=5, column=0, sticky="w", padx=16, pady=(10, 16))
 
+    def _build_printing_card(self) -> None:
+        card = Card(self)
+        card.grid(row=3, column=0, sticky="ew", padx=24, pady=(16, 0))
+        card.grid_columnconfigure((0, 1), weight=1)
+
+        SectionTitle(card, "Printing").grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(14, 2)
+        )
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Choose a printer and a receipt is sent to it straight after a "
+                "sale. Leave it on the system default to open the PDF instead."
+            ),
+            font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w",
+            wraplength=820, justify="left",
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 10))
+
+        printer_cell = ctk.CTkFrame(card, fg_color="transparent")
+        printer_cell.grid(row=2, column=0, sticky="ew", padx=16, pady=6)
+        printer_cell.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            printer_cell, text="Receipt printer", font=theme.font(12),
+            text_color=theme.TEXT_MUTED, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        self.printer_var = ctk.StringVar(value=SYSTEM_PRINTER)
+        self.printer_menu = ctk.CTkOptionMenu(
+            printer_cell, variable=self.printer_var, values=[SYSTEM_PRINTER], height=34
+        )
+        self.printer_menu.grid(row=1, column=0, sticky="ew")
+
+        width_cell = ctk.CTkFrame(card, fg_color="transparent")
+        width_cell.grid(row=2, column=1, sticky="ew", padx=16, pady=6)
+        width_cell.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            width_cell, text="Receipt width", font=theme.font(12),
+            text_color=theme.TEXT_MUTED, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        self.width_var = ctk.StringVar(value=RECEIPT_WIDTH_LABELS["80"])
+        ctk.CTkOptionMenu(
+            width_cell, variable=self.width_var,
+            values=list(RECEIPT_WIDTH_LABELS.values()), height=34,
+        ).grid(row=1, column=0, sticky="ew")
+
+        self.require_shift_check = ctk.CTkCheckBox(
+            card, text="A till shift must be open before selling"
+        )
+        self.require_shift_check.grid(row=3, column=0, sticky="w", padx=16, pady=(8, 0))
+        self.price_override_check = ctk.CTkCheckBox(
+            card, text="Allow price overrides at the till"
+        )
+        self.price_override_check.grid(row=3, column=1, sticky="w", padx=16, pady=(8, 0))
+
+        buttons = ctk.CTkFrame(card, fg_color="transparent")
+        buttons.grid(row=4, column=0, columnspan=2, sticky="ew", padx=16, pady=(12, 16))
+        ctk.CTkButton(
+            buttons, text="Save printing settings", height=38, width=190,
+            command=self._save_printing,
+        ).grid(row=0, column=0, padx=(0, 8))
+        ctk.CTkButton(
+            buttons, text="Find printers", height=38, width=150,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._find_printers,
+        ).grid(row=0, column=1)
+
+    def _build_data_card(self) -> None:
+        card = Card(self)
+        card.grid(row=4, column=0, sticky="ew", padx=24, pady=(16, 0))
+        card.grid_columnconfigure(0, weight=1)
+
+        SectionTitle(card, "Data safety").grid(
+            row=0, column=0, sticky="ew", padx=16, pady=(14, 2)
+        )
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Backups are taken with SQLite's own snapshot, so one can be made "
+                "while the shop is trading. Restoring keeps a copy of the current "
+                "data first, so it can always be undone."
+            ),
+            font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w",
+            wraplength=820, justify="left",
+        ).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
+
+        options = ctk.CTkFrame(card, fg_color="transparent")
+        options.grid(row=2, column=0, sticky="ew", padx=16)
+        options.grid_columnconfigure(2, weight=1)
+
+        self.backup_start_check = ctk.CTkCheckBox(
+            options, text="Back up automatically at start-up",
+            command=self._save_backup_options,
+        )
+        self.backup_start_check.grid(row=0, column=0, sticky="w", padx=(0, 16))
+        ctk.CTkLabel(
+            options, text="Keep", font=theme.font(12), text_color=theme.TEXT_MUTED,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 6))
+        self.backup_keep_entry = ctk.CTkEntry(options, width=70, height=32)
+        self.backup_keep_entry.grid(row=0, column=2, sticky="w")
+
+        buttons = ctk.CTkFrame(card, fg_color="transparent")
+        buttons.grid(row=3, column=0, sticky="ew", padx=16, pady=(12, 16))
+        for column, (label, command, colour) in enumerate((
+            ("Back up now", self._backup_now, theme.PRIMARY),
+            ("Restore a backup", self._restore, theme.DANGER),
+            ("Check the database", self._integrity_check, theme.NEUTRAL),
+            ("Audit log", self._open_audit, theme.NEUTRAL),
+        )):
+            ctk.CTkButton(
+                buttons, text=label, height=38, width=160, command=command,
+                fg_color=colour,
+                hover_color=(
+                    theme.DANGER_HOVER if colour == theme.DANGER
+                    else theme.PRIMARY_HOVER if colour == theme.PRIMARY
+                    else theme.NEUTRAL_HOVER
+                ),
+            ).grid(row=0, column=column, padx=(0, 8))
+
+        self.backup_label = ctk.CTkLabel(
+            card, text="", font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w",
+        )
+        self.backup_label.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
+
     def _build_account_card(self) -> None:
         card = Card(self)
-        card.grid(row=3, column=0, sticky="ew", padx=24, pady=(16, 24))
+        card.grid(row=5, column=0, sticky="ew", padx=24, pady=(16, 24))
         card.grid_columnconfigure(0, weight=1)
 
         SectionTitle(card, "Application").grid(
@@ -202,11 +334,141 @@ class SettingsView(ctk.CTkScrollableFrame):
         show_info(self, "Currency and tax settings saved.", "Settings saved")
         self.shell.invalidate("dashboard", "pos", "reports")
 
+    # ------------------------------------------------------------------ #
+    # Printing
+    # ------------------------------------------------------------------ #
+
+    def _find_printers(self) -> None:
+        names = printing.list_printers()
+        if not names:
+            show_info(
+                self,
+                "No printers could be listed. You can still print through the "
+                "system default.",
+                "No printers found",
+            )
+        self.printer_menu.configure(values=[SYSTEM_PRINTER] + names)
+        if names:
+            show_info(self, f"Found {len(names)} printer(s).", "Printers")
+
+    def _save_printing(self) -> None:
+        chosen = self.printer_var.get()
+        width = next(
+            (key for key, label in RECEIPT_WIDTH_LABELS.items()
+             if label == self.width_var.get()),
+            "80",
+        )
+        settings_service.set_many({
+            "printer_name": "" if chosen == SYSTEM_PRINTER else chosen,
+            "receipt_width_mm": width,
+            "require_shift": "1" if self.require_shift_check.get() else "0",
+            "allow_price_override": "1" if self.price_override_check.get() else "0",
+        })
+        show_info(self, "Printing settings saved.", "Settings saved")
+        self.shell.invalidate("pos")
+
+    # ------------------------------------------------------------------ #
+    # Data safety
+    # ------------------------------------------------------------------ #
+
+    def _save_backup_options(self) -> None:
+        try:
+            keep = int(parse_amount(self.backup_keep_entry.get() or 20, "backups to keep"))
+        except ValueError as exc:
+            show_error(self, exc, "Invalid value")
+            return
+        settings_service.set_many({
+            "backup_on_start": "1" if self.backup_start_check.get() else "0",
+            "backup_keep": str(max(keep, 1)),
+        })
+
+    def _backup_now(self) -> None:
+        self._save_backup_options()
+        try:
+            path = backups_service.create("manual")
+        except backups_service.BackupError as exc:
+            show_error(self, exc, "Backup failed")
+            return
+        backups_service.prune(settings_service.backup_keep())
+        self._refresh_backup_label()
+        show_info(self, f"Backup written to:\n{path}", "Backup complete")
+
+    def _restore(self) -> None:
+        entries = backups_service.list_backups()
+        if not entries:
+            show_error(self, "There are no backups to restore.", "No backups")
+            return
+
+        modal = RestoreModal(self, entries)
+        path = modal.wait_result()
+        if path is None:
+            return
+        if not ask_confirm(
+            self,
+            f"Replace all current data with {Path(path).name}?\n\n"
+            f"A copy of the current data is saved first, so this can be undone.",
+            "Restore backup",
+        ):
+            return
+        try:
+            safety = backups_service.restore(path)
+        except backups_service.BackupError as exc:
+            show_error(self, exc, "Restore failed")
+            return
+
+        self._refresh_backup_label()
+        self.shell.invalidate(
+            "dashboard", "pos", "till", "products", "purchasing", "customers",
+            "invoices", "reports", "users",
+        )
+        show_info(
+            self,
+            f"Restored from {Path(path).name}.\n\n"
+            f"The data as it was is saved at:\n{safety}",
+            "Restore complete",
+        )
+
+    def _integrity_check(self) -> None:
+        detail = db.integrity_check()
+        if detail.strip().lower() == "ok":
+            show_info(
+                self,
+                "The database passed its integrity check.",
+                "Database checked",
+            )
+        else:
+            show_error(
+                self,
+                f"The database reported a problem:\n\n{detail}\n\n"
+                f"Restore the most recent backup.",
+                "Database problem",
+            )
+
+    def _open_audit(self) -> None:
+        AuditModal(self)
+
+    def _refresh_backup_label(self) -> None:
+        entries = backups_service.list_backups()
+        if not entries:
+            self.backup_label.configure(
+                text=f"No backups yet. They are kept in {config.BACKUPS_DIR}"
+            )
+            return
+        newest = entries[0]
+        self.backup_label.configure(
+            text=(
+                f"{len(entries)} backup(s) in {config.BACKUPS_DIR}\n"
+                f"Most recent: {newest['name']} ({newest['taken_at']}, "
+                f"{newest['size_kb']} kB)"
+            )
+        )
+
     def _change_appearance(self, mode: str) -> None:
         ctk.set_appearance_mode(mode)
         # Treeview styling is not managed by CustomTkinter, so rebuild the pages.
         self.shell.invalidate(
-            "dashboard", "pos", "products", "customers", "invoices", "reports", "users"
+            "dashboard", "pos", "till", "products", "purchasing", "customers",
+            "invoices", "reports", "users",
         )
 
     def _change_password(self) -> None:
@@ -263,9 +525,146 @@ class SettingsView(ctk.CTkScrollableFrame):
         self.rounding.set(values.get("lbp_rounding", ""))
         self.low_stock.set(values.get("low_stock_default", ""))
         self.appearance_var.set(ctk.get_appearance_mode())
+
+        printer = values.get("printer_name", "")
+        self.printer_menu.configure(
+            values=[SYSTEM_PRINTER] + ([printer] if printer else [])
+        )
+        self.printer_var.set(printer or SYSTEM_PRINTER)
+        self.width_var.set(
+            RECEIPT_WIDTH_LABELS.get(values.get("receipt_width_mm", "80"),
+                                     RECEIPT_WIDTH_LABELS["80"])
+        )
+        _set_check(self.require_shift_check, settings_service.require_shift())
+        _set_check(self.price_override_check, settings_service.allow_price_override())
+        _set_check(self.backup_start_check, settings_service.backup_on_start())
+        self.backup_keep_entry.delete(0, "end")
+        self.backup_keep_entry.insert(0, str(settings_service.backup_keep()))
+        self._refresh_backup_label()
+
         self._update_preview()
         self.paths_label.configure(
             text=f"Database:  {db.database_path()}\n"
                  f"Receipts:  {config.RECEIPTS_DIR}\n"
+                 f"Backups:   {config.BACKUPS_DIR}\n"
+                 f"Images:    {config.IMAGES_DIR}\n"
+                 f"Logs:      {config.LOGS_DIR}\n"
                  f"{config.APP_NAME} v{config.APP_VERSION}"
+        )
+
+
+def _set_check(widget, on: bool) -> None:
+    widget.select() if on else widget.deselect()
+
+
+class RestoreModal(Modal):
+    """Pick which snapshot to go back to."""
+
+    def __init__(self, parent, entries):
+        super().__init__(parent, "Restore a backup", 620, 440)
+        self.entries = entries
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        SectionTitle(self, "Available backups").grid(
+            row=0, column=0, sticky="ew", padx=18, pady=(18, 8)
+        )
+        self.table = DataTable(
+            self,
+            columns=[
+                ("name", "Backup", 300, "w"),
+                ("taken_at", "Taken", 150, "w"),
+                ("size_kb", "Size (kB)", 90, "e"),
+            ],
+            id_key="name",
+            height=10,
+        )
+        self.table.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 10))
+        self.table.set_rows(entries, empty_message="No backups yet.")
+        self.table.select_first()
+        self.table.on_double_click(self.submit)
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            footer, text="Cancel", width=100, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self.on_cancel,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ctk.CTkButton(
+            footer, text="Restore", width=140, height=36,
+            fg_color=theme.DANGER, hover_color=theme.DANGER_HOVER,
+            command=self.submit,
+        ).grid(row=0, column=2)
+
+    def submit(self) -> None:
+        name = self.table.selected_id()
+        if name is None:
+            return
+        entry = next((e for e in self.entries if e["name"] == name), None)
+        if entry is None:
+            return
+        self.result = entry["path"]
+        self.grab_release()
+        self.destroy()
+
+
+class AuditModal(Modal):
+    """Who did what, and when."""
+
+    def __init__(self, parent):
+        super().__init__(parent, "Audit log", 900, 560)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
+        SectionTitle(self, "Audit log").grid(
+            row=0, column=0, sticky="ew", padx=18, pady=(18, 8)
+        )
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 8))
+        bar.grid_columnconfigure(0, weight=1)
+
+        self.search = ctk.CTkEntry(
+            bar, placeholder_text="Search by user, detail or record", height=34
+        )
+        self.search.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.search.bind("<KeyRelease>", lambda _event: self.reload())
+
+        self.action = ctk.CTkOptionMenu(
+            bar, values=["All"] + audit_service.known_actions(), width=200, height=34,
+            command=lambda _value: self.reload(),
+        )
+        self.action.set("All")
+        self.action.grid(row=0, column=1)
+
+        self.table = DataTable(
+            self,
+            columns=[
+                ("at", "When", 150, "w"),
+                ("username", "Who", 110, "w"),
+                ("action", "Action", 160, "w"),
+                ("entity", "Record", 100, "w"),
+                ("entity_id", "Id", 60, "w"),
+                ("detail", "Detail", 300, "w"),
+            ],
+            id_key="audit_id",
+            height=14,
+        )
+        self.table.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 10))
+
+        ctk.CTkButton(
+            self, text="Close", height=36, width=120, command=self.on_cancel
+        ).grid(row=3, column=0, pady=(0, 16))
+
+        self.reload()
+
+    def reload(self) -> None:
+        self.table.set_rows(
+            audit_service.list_entries(
+                search=self.search.get(), action=self.action.get()
+            ),
+            tag_func=lambda row: "danger" if "failed" in row["action"].lower() else (),
+            empty_message="Nothing has been recorded yet.",
         )

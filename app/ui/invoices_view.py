@@ -5,12 +5,13 @@ from __future__ import annotations
 import customtkinter as ctk
 
 from app import config
-from app.money import D, fmt_lbp, fmt_usd, to_lbp
+from app.money import D, fmt_lbp, fmt_usd, parse_int, to_lbp
+from app.services import returns as returns_service
 from app.services import sales as sales_service
 from app.services import reports as reports_service
 from app.services import settings as settings_service
 from app.ui import theme
-from app.ui.receipt_actions import print_receipt, save_receipt_as
+from app.ui.receipt_actions import print_receipt, print_return_slip, save_receipt_as
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,
@@ -94,6 +95,9 @@ class InvoicesView(ctk.CTkFrame):
         )
         self.table.set_formatter("total_usd", lambda value, _row: fmt_usd(value))
         self.table.set_formatter("customer_name", lambda value, _row: value or "Walk-in")
+        self.table.set_formatter(
+            "status", lambda _value, row: sales_service.display_status(row)
+        )
         self.table.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         self.table.on_double_click(self._details)
 
@@ -104,9 +108,10 @@ class InvoicesView(ctk.CTkFrame):
             ("View details", self._details, theme.PRIMARY),
             ("Print receipt", self._print, theme.NEUTRAL),
             ("Save PDF…", self._save_pdf, theme.NEUTRAL),
+            ("Return items…", self._return_items, theme.WARNING),
         ]
         if shell.user.is_admin:
-            specs.append(("Refund", self._refund, theme.DANGER))
+            specs.append(("Refund all", self._refund, theme.DANGER))
         for column, (label, command, colour) in enumerate(specs):
             ctk.CTkButton(
                 buttons, text=label, height=36, width=140, command=command,
@@ -114,6 +119,7 @@ class InvoicesView(ctk.CTkFrame):
                 hover_color=(
                     theme.DANGER_HOVER if colour == theme.DANGER
                     else theme.PRIMARY_HOVER if colour == theme.PRIMARY
+                    else theme.WARNING if colour == theme.WARNING
                     else theme.NEUTRAL_HOVER
                 ),
             ).grid(row=0, column=column, padx=(0, 8))
@@ -140,6 +146,36 @@ class InvoicesView(ctk.CTkFrame):
         sale_id = self._selected_id()
         if sale_id is not None:
             save_receipt_as(self, sale_id)
+
+    def _return_items(self) -> None:
+        sale_id = self._selected_id()
+        if sale_id is None:
+            return
+        lines = returns_service.returnable_lines(sale_id)
+        if not any(line["remaining_qty"] > 0 for line in lines):
+            sale = sales_service.get_sale(sale_id)
+            show_error(
+                self,
+                f"Everything on {sale['invoice_no']} has already been returned.",
+                "Nothing to return",
+            )
+            return
+
+        modal = ReturnModal(self, sale_id, self.shell.user)
+        return_id = modal.wait_result()
+        if return_id is None:
+            return
+
+        self.refresh()
+        self.shell.invalidate("dashboard", "products", "reports", "till")
+        record = returns_service.get_return(return_id)
+        if ask_confirm(
+            self,
+            f"{record['return_no']} refunded {fmt_usd(record['total_usd'])}.\n\n"
+            f"Print the return slip?",
+            "Return recorded",
+        ):
+            print_return_slip(self, return_id)
 
     def _refund(self) -> None:
         sale_id = self._selected_id()
@@ -171,7 +207,7 @@ class InvoicesView(ctk.CTkFrame):
             show_error(self, exc, "Refund failed")
             return
         self.refresh()
-        self.shell.invalidate("dashboard", "products", "reports")
+        self.shell.invalidate("dashboard", "products", "reports", "till")
 
     def refresh(self) -> None:
         date_from, date_to = range_dates(self.range_var.get())
@@ -294,3 +330,169 @@ class InvoiceDetailModal(Modal):
             buttons, text="Close", height=36, fg_color=theme.NEUTRAL,
             hover_color=theme.NEUTRAL_HOVER, command=self.on_cancel,
         ).grid(row=0, column=2, padx=3, sticky="ew")
+
+
+class ReturnModal(Modal):
+    """Choose how many of each line comes back, showing the refund before it happens.
+
+    The refund is quoted by the service rather than worked out here, so the
+    figure on screen is exactly the figure that will be written.
+    """
+
+    def __init__(self, parent, sale_id: int, user):
+        sale = sales_service.get_sale(sale_id)
+        super().__init__(parent, f"Return against {sale['invoice_no']}", 660, 580)
+        self.sale_id = sale_id
+        self.user = user
+        self.entries: dict[int, ctk.CTkEntry] = {}
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            self,
+            text=f"Sold {sale['sale_time']} for {fmt_usd(sale['total_usd'])}",
+            font=theme.font(12), text_color=theme.TEXT_MUTED, anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+
+        body = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew", padx=18)
+        body.grid_columnconfigure(0, weight=1)
+
+        for column, text in enumerate(("Item", "Sold", "Already back", "Returning")):
+            ctk.CTkLabel(
+                body, text=text, font=theme.font(11, "bold"),
+                text_color=theme.TEXT_MUTED, anchor="w",
+            ).grid(row=0, column=column, sticky="w", padx=6, pady=(0, 6))
+
+        for index, line in enumerate(returns_service.returnable_lines(sale_id), start=1):
+            ctk.CTkLabel(
+                body, text=line["name_at_sale"], font=theme.font(12), anchor="w",
+            ).grid(row=index, column=0, sticky="ew", padx=6, pady=3)
+            ctk.CTkLabel(
+                body, text=str(line["qty"]), font=theme.font(12), anchor="e",
+            ).grid(row=index, column=1, sticky="e", padx=6, pady=3)
+            ctk.CTkLabel(
+                body, text=str(line["returned_qty"]), font=theme.font(12), anchor="e",
+            ).grid(row=index, column=2, sticky="e", padx=6, pady=3)
+
+            entry = ctk.CTkEntry(body, width=80, height=32)
+            entry.insert(0, "0")
+            entry.grid(row=index, column=3, padx=6, pady=3)
+            if line["remaining_qty"] <= 0:
+                entry.configure(state="disabled")
+            else:
+                entry.bind("<KeyRelease>", lambda _event: self._requote())
+            self.entries[line["sale_item_id"]] = entry
+
+        options = ctk.CTkFrame(self, fg_color="transparent")
+        options.grid(row=2, column=0, sticky="ew", padx=18, pady=(10, 0))
+        options.grid_columnconfigure(2, weight=1)
+
+        ctk.CTkLabel(
+            options, text="Reason", font=theme.font(12), text_color=theme.TEXT_MUTED,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.reason = ctk.CTkOptionMenu(
+            options, values=list(config.RETURN_REASONS), width=180, height=34
+        )
+        self.reason.grid(row=0, column=1, sticky="w")
+
+        ctk.CTkLabel(
+            options, text="Refund by", font=theme.font(12), text_color=theme.TEXT_MUTED,
+        ).grid(row=0, column=2, sticky="e", padx=(16, 8))
+        self.method = ctk.CTkOptionMenu(
+            options, values=list(config.PAYMENT_METHODS), width=150, height=34
+        )
+        self.method.set(sale["payment_method"])
+        self.method.grid(row=0, column=3, sticky="e")
+
+        self.restock = ctk.CTkCheckBox(self, text="Put the goods back into stock")
+        self.restock.select()
+        self.restock.grid(row=3, column=0, sticky="w", padx=18, pady=(10, 0))
+
+        self.quote_label = ctk.CTkLabel(
+            self, text="Refund $0.00", font=theme.font(18, "bold"),
+            text_color=theme.TEXT, anchor="e",
+        )
+        self.quote_label.grid(row=4, column=0, sticky="ew", padx=18, pady=(8, 0))
+        self.detail_label = ctk.CTkLabel(
+            self, text="Enter the quantities coming back.", font=theme.font(11),
+            text_color=theme.TEXT_MUTED, anchor="e",
+        )
+        self.detail_label.grid(row=5, column=0, sticky="ew", padx=18)
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=6, column=0, sticky="ew", padx=18, pady=(10, 16))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            footer, text="Return everything", width=150, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._fill_all,
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(
+            footer, text="Cancel", width=100, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self.on_cancel,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ctk.CTkButton(
+            footer, text="Refund", width=140, height=36, command=self.submit
+        ).grid(row=0, column=2)
+
+    # ------------------------------------------------------------------ #
+
+    def _quantities(self) -> dict:
+        quantities = {}
+        for sale_item_id, entry in self.entries.items():
+            text = entry.get().strip()
+            if not text:
+                continue
+            quantities[sale_item_id] = parse_int(text, "quantity")
+        return quantities
+
+    def _fill_all(self) -> None:
+        for line in returns_service.returnable_lines(self.sale_id):
+            entry = self.entries[line["sale_item_id"]]
+            if str(entry.cget("state")) == "disabled":
+                continue
+            entry.delete(0, "end")
+            entry.insert(0, str(line["remaining_qty"]))
+        self._requote()
+
+    def _requote(self) -> None:
+        """Show the live refund. A half-typed quantity is not an error yet."""
+        try:
+            quoted = returns_service.quote(self.sale_id, self._quantities())
+        except (returns_service.ReturnError, ValueError) as exc:
+            self.quote_label.configure(text="Refund $0.00")
+            self.detail_label.configure(text=str(exc))
+            return
+
+        self.quote_label.configure(text=f"Refund {fmt_usd(quoted['total_usd'])}")
+        parts = [f"goods {fmt_usd(quoted['line_value_usd'])}"]
+        if quoted["discount_share_usd"]:
+            parts.append(f"less discount {fmt_usd(quoted['discount_share_usd'])}")
+        if quoted["tax_share_usd"]:
+            parts.append(f"plus tax {fmt_usd(quoted['tax_share_usd'])}")
+        self.detail_label.configure(text="   ".join(parts))
+
+    def submit(self) -> None:
+        try:
+            quantities = self._quantities()
+        except ValueError as exc:
+            show_error(self, exc, "Check the quantities")
+            return
+
+        try:
+            return_id = returns_service.create_return(
+                self.sale_id, self.user.user_id, quantities,
+                refund_method=self.method.get(),
+                reason=self.reason.get(),
+                restock=bool(self.restock.get()),
+            )
+        except returns_service.ReturnError as exc:
+            show_error(self, exc, "Could not process the return")
+            return
+
+        self.result = return_id
+        self.grab_release()
+        self.destroy()
