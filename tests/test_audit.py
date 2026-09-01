@@ -82,5 +82,62 @@ class AuditTests(DatabaseTestCase):
         service.record("After the table vanished")
 
 
+
+class AuthAuditTests(DatabaseTestCase):
+    """Account changes and sign-ins are the entries an owner actually reads."""
+
+    def test_a_successful_sign_in_is_recorded(self):
+        from app import auth
+
+        auth.authenticate("admin", "admin123")
+        entry = service.list_entries(action="Signed in")[0]
+        self.assertEqual(entry["username"], "admin")
+
+    def test_a_failed_sign_in_is_recorded_with_the_attempted_name(self):
+        from app import auth
+
+        with self.assertRaises(auth.AuthError):
+            auth.authenticate("admin", "wrong")
+        entry = service.list_entries(action="Sign-in failed")[0]
+        self.assertEqual(entry["detail"], "admin")
+
+    def test_a_deactivated_account_is_recorded_separately(self):
+        from app import auth
+
+        user_id = auth.create_user("cashier", "secret1", "Employee")
+        auth.set_active(user_id, False)
+        with self.assertRaises(auth.AuthError):
+            auth.authenticate("cashier", "secret1")
+        self.assertEqual(len(service.list_entries(action="Sign-in refused")), 1)
+
+    def test_creating_and_editing_a_user_is_recorded(self):
+        from app import auth
+
+        service.set_actor(self.admin)
+        self.addCleanup(service.clear_actor)
+        user_id = auth.create_user("cashier", "secret1", "Employee")
+        auth.update_user(user_id, username="cashier", role="Admin", full_name="Rami")
+
+        actions = [entry["action"] for entry in service.list_entries()]
+        self.assertIn("User created", actions)
+        self.assertIn("User updated", actions)
+        self.assertIn("role", service.list_entries(action="User updated")[0]["detail"])
+
+    def test_a_password_change_is_recorded_without_the_password(self):
+        from app import auth
+
+        user_id = auth.create_user("cashier", "secret1", "Employee")
+        auth.set_password(user_id, "brandnew1")
+        entry = service.list_entries(action="Password changed")[0]
+        self.assertNotIn("brandnew1", entry["detail"])
+
+    def test_deactivating_a_user_is_recorded(self):
+        from app import auth
+
+        user_id = auth.create_user("cashier", "secret1", "Employee")
+        auth.delete_user(user_id)
+        self.assertEqual(len(service.list_entries(action="User deactivated")), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

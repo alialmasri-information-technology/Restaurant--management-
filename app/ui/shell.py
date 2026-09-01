@@ -14,8 +14,10 @@ from app.ui.widgets import ask_confirm
 NAV_ITEMS = (
     ("dashboard", "Dashboard", False),
     ("pos", "New Sale", False),
+    ("till", "Till", False),
     ("invoices", "Invoices", False),
     ("products", "Products", False),
+    ("purchasing", "Purchasing", True),
     ("customers", "Customers", False),
     ("reports", "Reports", True),
     ("users", "Users", True),
@@ -111,16 +113,20 @@ class AppShell(ctk.CTkFrame):
             invoices_view,
             pos_view,
             products_view,
+            purchasing_view,
             reports_view,
             settings_view,
+            till_view,
             users_view,
         )
 
         factories = {
             "dashboard": dashboard_view.DashboardView,
             "pos": pos_view.PosView,
+            "till": till_view.TillView,
             "invoices": invoices_view.InvoicesView,
             "products": products_view.ProductsView,
+            "purchasing": purchasing_view.PurchasingView,
             "customers": customers_view.CustomersView,
             "reports": reports_view.ReportsView,
             "users": users_view.UsersView,

@@ -63,13 +63,17 @@ def log_path():
     return config.LOGS_DIR / LOG_FILE
 
 
-def exception(message: str, *args) -> None:
-    get().exception(message, *args)
+def exception(message: str, *args, **kwargs) -> None:
+    get().exception(message, *args, **kwargs)
 
 
-def info(message: str, *args) -> None:
-    get().info(message, *args)
+def info(message: str, *args, **kwargs) -> None:
+    get().info(message, *args, **kwargs)
 
 
-def warning(message: str, *args) -> None:
-    get().warning(message, *args)
+def warning(message: str, *args, **kwargs) -> None:
+    get().warning(message, *args, **kwargs)
+
+
+def error(message: str, *args, **kwargs) -> None:
+    get().error(message, *args, **kwargs)

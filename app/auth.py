@@ -18,6 +18,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from app import config, db
+from app.services import audit
 
 ALGORITHM = "pbkdf2_sha256"
 ITERATIONS = 260_000
@@ -92,7 +93,7 @@ def create_user(username: str, password: str, role: str, full_name: str = "") ->
     if role not in config.ROLES:
         raise AuthError(f"Unknown role: {role}")
     try:
-        return db.execute(
+        user_id = db.execute(
             """
             INSERT INTO users (username, password_hash, role, full_name)
             VALUES (?, ?, ?, ?)
@@ -101,6 +102,8 @@ def create_user(username: str, password: str, role: str, full_name: str = "") ->
         )
     except sqlite3.IntegrityError as exc:
         raise AuthError(f"The username '{username}' is already taken.") from exc
+    audit.record("User created", "user", user_id, f"{username.strip()} ({role})")
+    return user_id
 
 
 def authenticate(username: str, password: str) -> User:
@@ -116,10 +119,19 @@ def authenticate(username: str, password: str) -> User:
     # wrong password take the same amount of time.
     stored = row["password_hash"] if row else hash_password("dummy", iterations=1000)
     if not verify_password(password, stored) or row is None:
+        # Recorded without an actor: a failed attempt has no signed-in user, and
+        # a run of these is exactly what someone reviewing the log wants to see.
+        audit.record("Sign-in failed", "user", "", username.strip(), user=None)
         raise AuthError("Invalid username or password.")
     if not row["is_active"]:
+        audit.record(
+            "Sign-in refused", "user", row["user_id"], "account deactivated", user=None
+        )
         raise AuthError("This account has been deactivated. Contact an administrator.")
-    return _row_to_user(row)
+
+    user = _row_to_user(row)
+    audit.record("Signed in", "user", user.user_id, user.role, user=user)
+    return user
 
 
 def get_user(user_id: int) -> User | None:
@@ -150,6 +162,8 @@ def update_user(user_id: int, *, username: str, role: str, full_name: str) -> No
         raise AuthError(f"Unknown role: {role}")
     if role != config.ROLE_ADMIN and count_active_admins(excluding=user_id) == 0:
         raise AuthError("The last active administrator must keep the Admin role.")
+
+    before = db.query_one("SELECT * FROM users WHERE user_id = ?", (user_id,))
     try:
         db.execute(
             "UPDATE users SET username = ?, role = ?, full_name = ? WHERE user_id = ?",
@@ -157,6 +171,14 @@ def update_user(user_id: int, *, username: str, role: str, full_name: str) -> No
         )
     except sqlite3.IntegrityError as exc:
         raise AuthError(f"The username '{username}' is already taken.") from exc
+
+    if before is not None:
+        detail = audit.describe_changes(
+            dict(before),
+            {"username": username.strip(), "role": role, "full_name": full_name.strip()},
+            ["username", "role", "full_name"],
+        )
+        audit.record("User updated", "user", user_id, detail or "no changes")
 
 
 def set_password(user_id: int, password: str) -> None:
@@ -166,6 +188,8 @@ def set_password(user_id: int, password: str) -> None:
         "UPDATE users SET password_hash = ? WHERE user_id = ?",
         (hash_password(password), user_id),
     )
+    # The password itself is never recorded, only that it changed.
+    audit.record("Password changed", "user", user_id)
 
 
 def change_password(user_id: int, current_password: str, new_password: str) -> None:
@@ -183,6 +207,9 @@ def set_active(user_id: int, active: bool) -> None:
     db.execute(
         "UPDATE users SET is_active = ? WHERE user_id = ?",
         (1 if active else 0, user_id),
+    )
+    audit.record(
+        "User reactivated" if active else "User deactivated", "user", user_id
     )
 
 

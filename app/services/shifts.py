@@ -23,24 +23,24 @@ class ShiftError(Exception):
     """Raised for user-facing till failures."""
 
 
+# Both lookups carry the operator names, so a caller never has to join again.
+_SELECT = """
+    SELECT s.*, o.username AS opened_by_name, c.username AS closed_by_name
+    FROM shifts s
+    LEFT JOIN users o ON o.user_id = s.opened_by
+    LEFT JOIN users c ON c.user_id = s.closed_by
+"""
+
+
 def current_shift() -> sqlite3.Row | None:
     return db.query_one(
-        "SELECT * FROM shifts WHERE status = ? ORDER BY shift_id DESC LIMIT 1",
+        _SELECT + " WHERE s.status = ? ORDER BY s.shift_id DESC LIMIT 1",
         (config.SHIFT_OPEN,),
     )
 
 
 def get_shift(shift_id: int) -> sqlite3.Row | None:
-    return db.query_one(
-        """
-        SELECT s.*, o.username AS opened_by_name, c.username AS closed_by_name
-        FROM shifts s
-        LEFT JOIN users o ON o.user_id = s.opened_by
-        LEFT JOIN users c ON c.user_id = s.closed_by
-        WHERE s.shift_id = ?
-        """,
-        (shift_id,),
-    )
+    return db.query_one(_SELECT + " WHERE s.shift_id = ?", (shift_id,))
 
 
 def shift_required() -> bool:
