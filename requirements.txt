@@ -1,0 +1,4 @@
+# RE4 runtime dependencies.
+# Everything else (SQLite, Tkinter, hashing, CSV) comes from the standard library.
+customtkinter>=5.2.2
+reportlab>=4.0.0

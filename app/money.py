@@ -1,0 +1,112 @@
+"""Money arithmetic.
+
+USD amounts are computed with :class:`~decimal.Decimal` so that line totals,
+discounts and tax never drift the way binary floats do, and are only converted
+to ``float`` at the SQLite boundary. LBP is a display/settlement currency
+derived from USD at the rate stored on each sale, and is rounded to a
+configurable step because nobody hands out 1 LBP in change.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal, ROUND_HALF_UP
+
+CENT = Decimal("0.01")
+ZERO = Decimal("0")
+
+
+def D(value) -> Decimal:
+    """Coerce anything money-ish to Decimal without going through binary float."""
+    if isinstance(value, Decimal):
+        return value
+    if value is None or value == "":
+        return ZERO
+    return Decimal(str(value).strip().replace(",", ""))
+
+
+def usd(value) -> Decimal:
+    """Round to whole cents, half-up (what a till does, unlike banker's rounding)."""
+    return D(value).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def to_float(value) -> float:
+    """Convert to the float SQLite stores. Only call at the DB boundary."""
+    return float(usd(value))
+
+
+def to_lbp(usd_amount, rate, step=1000) -> Decimal:
+    """Convert USD to LBP at ``rate``, rounded to the nearest ``step``."""
+    rate = D(rate)
+    step = D(step)
+    raw = D(usd_amount) * rate
+    if step <= ZERO:
+        return raw.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    return (raw / step).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * step
+
+
+def fmt_usd(value) -> str:
+    return f"${usd(value):,.2f}"
+
+
+def fmt_lbp(value) -> str:
+    return f"{D(value):,.0f} LBP"
+
+
+def parse_amount(text, field="amount") -> Decimal:
+    """Parse user input into a non-negative Decimal, or raise ValueError."""
+    if text is None or str(text).strip() == "":
+        return ZERO
+    try:
+        value = D(text)
+    except Exception as exc:  # noqa: BLE001 - surfaced to the user as a message
+        raise ValueError(f"{field.capitalize()} must be a number.") from exc
+    if value < ZERO:
+        raise ValueError(f"{field.capitalize()} cannot be negative.")
+    return value
+
+
+def parse_int(text, field="value", minimum=None) -> int:
+    if text is None or str(text).strip() == "":
+        raise ValueError(f"{field.capitalize()} is required.")
+    try:
+        value = int(str(text).strip())
+    except ValueError as exc:
+        raise ValueError(f"{field.capitalize()} must be a whole number.") from exc
+    if minimum is not None and value < minimum:
+        raise ValueError(f"{field.capitalize()} cannot be less than {minimum}.")
+    return value
+
+
+def line_total(qty, unit_price, line_discount=0) -> Decimal:
+    """One cart line's value, never below zero however big the line discount."""
+    gross = D(qty) * D(unit_price)
+    return usd(max(ZERO, gross - D(line_discount)))
+
+
+def compute_totals(lines, discount=0, tax_rate=0):
+    """Total up a sale.
+
+    ``lines`` is any iterable of ``(qty, unit_price)`` or
+    ``(qty, unit_price, line_discount)`` tuples, or of objects exposing ``qty``,
+    ``unit_price`` and optionally ``discount``. The ``discount`` argument is the
+    invoice-level discount in USD, clamped to the subtotal so a sale can never
+    go negative. Tax is a percentage applied to the discounted subtotal.
+
+    Returns ``(subtotal, discount, tax, total)`` as Decimals.
+    """
+    subtotal = ZERO
+    for line in lines:
+        if isinstance(line, (tuple, list)):
+            qty, unit_price = line[0], line[1]
+            line_discount = line[2] if len(line) > 2 else ZERO
+        else:
+            qty, unit_price = line.qty, line.unit_price
+            line_discount = getattr(line, "discount", ZERO)
+        subtotal += line_total(qty, unit_price, line_discount)
+    subtotal = usd(subtotal)
+
+    discount = usd(max(ZERO, min(D(discount), subtotal)))
+    taxable = subtotal - discount
+    tax = usd(taxable * D(tax_rate) / Decimal(100))
+    total = usd(taxable + tax)
+    return subtotal, discount, tax, total

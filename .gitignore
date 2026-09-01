@@ -31,6 +31,9 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...except RE4's own build definition, which is part of the project.
+!RE4.spec
+!RE4.spec  # the build definition is part of the project
 
 # Installer logs
 pip-log.txt
@@ -205,3 +208,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# RE4 runtime data — never commit a live shop database
+re4.db
+re4.db-wal
+re4.db-shm
+receipts/
