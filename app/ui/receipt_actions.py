@@ -134,6 +134,26 @@ def print_return_slip(parent, return_id: int, *, open_after: bool = True) -> Pat
     return path
 
 
+def print_day_report(parent, date=None) -> Path | None:
+    """The end-of-day sheet for one date.
+
+    Unlike a Z report this does not need an open shift, and it does not close
+    anything — it can be reprinted for any past day, and reading it is the last
+    thing anybody does before locking up.
+    """
+    path = _produce(
+        parent, lambda: receipts.generate_day_report(date),
+        "Could not create the day report",
+    )
+    if not path:
+        return None
+    if settings_service.printer_name():
+        send_to_printer(parent, path, quiet=True)
+    else:
+        open_file(path)
+    return path
+
+
 def print_shift_report(parent, shift_id: int, kind: str = "Z") -> Path | None:
     path = _produce(
         parent, lambda: receipts.generate_shift_report(shift_id, kind=kind),

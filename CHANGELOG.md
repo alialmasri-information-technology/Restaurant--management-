@@ -5,6 +5,51 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [2.3.0] — 2026-09-04
+
+No schema change: everything here reads what was already being recorded.
+
+### Added
+
+**The end-of-day sheet.** Closing up meant opening four screens and adding up by
+hand, which is exactly when a figure gets missed. One sheet now ties the day
+together, in the order the person locking the door works through it:
+
+- **Anything unfinished goes at the top** — a till still open, a drawer that did
+  not come back to its expected figure, sales taken with no shift open. These
+  are the things discovered a week later when nobody can explain them.
+- **Trading**: sales, discounts, returns netted off, net revenue in USD and LBP,
+  tax, gross profit and margin, units, average sale, what it was taken as, who
+  served, and the five best sellers.
+- **Every drawer opened that day** with its expected, counted and variance
+  figures, and the day's total variance underneath. An uncounted drawer reads
+  as *not yet counted*, never as balanced.
+- **Customer accounts**: what went on account today, what was paid off (and how
+  much of that is cash in the drawer), and the receivable being carried into
+  tomorrow — as it stood at the end of *that* day, so reprinting an old sheet
+  does not re-price it with today's balances.
+- **Stock**: what was received, and any stock take posted, with its variance at
+  cost.
+- Sign-off lines for whoever counted and whoever checked.
+
+The day is bounded by the date, not by a shift, so a drawer left open overnight
+still belongs to the day it opened rather than quietly disappearing.
+
+It prints on the same roll as every other document, because a shop with a
+thermal printer at the till usually has nothing else. Reach it from *Till → Day
+report* while locking up, from *Reports → Day report* to reprint any past day,
+or from the command line with `--day-report [DATE]` for a machine that closes
+unattended.
+
+### Fixed
+
+- Recovery commands no longer risk a `UnicodeEncodeError` when a Windows console
+  cannot spell the message they are printing.
+
+### Changed
+
+- 388 tests, up from 350.
+
 ## [2.2.0] — 2026-09-04
 
 Database schema v4. An existing shop database is migrated in place on first

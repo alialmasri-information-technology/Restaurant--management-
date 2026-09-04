@@ -290,3 +290,65 @@ class CustomerAccountScreenTests(DatabaseTestCase):
 
         view = shell._views["reports"]
         self.assertEqual(len(view.owed.tree.get_children()), 1)
+
+
+@unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
+class DayReportSmokeTests(DatabaseTestCase):
+    """The end-of-day sheet, reached the way a shopkeeper reaches it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        product_id = products_service.create_product(
+            sku="DAY-1", name="Day Widget", price_usd=5, cost_usd=2, stock_qty=10
+        )
+        cart = sales_service.Cart()
+        cart.add_product(products_service.get_product(product_id), 2)
+        sales_service.create_sale(user_id=self.admin.user_id, cart=cart, amount_paid=10)
+
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(lambda: _tear_down(self.root))
+
+    def _shell(self):
+        from app.ui.shell import AppShell
+
+        shell = AppShell(self.root, self.admin, lambda: None)
+        shell.grid(row=0, column=0, sticky="nsew")
+        self.root.update_idletasks()
+        return shell
+
+    def test_the_till_screen_can_produce_one(self):
+        from app.ui import receipt_actions
+
+        shell = self._shell()
+        shell.show("till")
+        self.root.update_idletasks()
+
+        produced = []
+        original = receipt_actions.open_file
+        receipt_actions.open_file = produced.append
+        try:
+            shell._views["till"].print_day_report()
+        finally:
+            receipt_actions.open_file = original
+
+        self.assertEqual(len(produced), 1)
+        self.assertTrue(produced[0].exists())
+
+    def test_the_reports_screen_can_reprint_one(self):
+        from app.ui import receipt_actions
+
+        shell = self._shell()
+        shell.show("reports")
+        self.root.update_idletasks()
+
+        produced = []
+        original = receipt_actions.open_file
+        receipt_actions.open_file = produced.append
+        try:
+            shell._views["reports"]._day_report()
+        finally:
+            receipt_actions.open_file = original
+
+        self.assertEqual(len(produced), 1)
+        self.assertTrue(produced[0].exists())

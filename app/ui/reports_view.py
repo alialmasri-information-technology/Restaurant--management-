@@ -13,7 +13,7 @@ from app.services import accounts as accounts_service
 from app.services import reports as reports_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
-from app.ui import theme
+from app.ui import receipt_actions, theme
 from app.ui.dashboard_view import BarChart
 from app.ui.shell import PageHeader
 from app.ui.widgets import Card, DataTable, SectionTitle, StatCard, show_error, show_info
@@ -51,10 +51,15 @@ class ReportsView(ctk.CTkScrollableFrame):
             width=160, height=36, command=lambda _value: self.refresh(),
         ).grid(row=0, column=0, padx=(0, 8))
         ctk.CTkButton(
+            self.header.actions, text="Day report", height=36, width=120,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._day_report,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ctk.CTkButton(
             self.header.actions, text="Export CSV", height=36, width=120,
             fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
             command=self._export_csv,
-        ).grid(row=0, column=1)
+        ).grid(row=0, column=2)
 
         stats = ctk.CTkFrame(self, fg_color="transparent")
         stats.grid(row=1, column=0, sticky="ew", padx=24)
@@ -141,6 +146,12 @@ class ReportsView(ctk.CTkScrollableFrame):
         return table
 
     # ------------------------------------------------------------------ #
+
+    def _day_report(self) -> None:
+        # The last day of the chosen range, so "Yesterday" prints yesterday and
+        # any longer range prints the day it ended on.
+        _, date_to = range_dates(self.range_var.get())
+        receipt_actions.print_day_report(self, date_to or reports_service.today())
 
     def _export_csv(self) -> None:
         date_from, date_to = range_dates(self.range_var.get())

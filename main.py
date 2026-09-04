@@ -55,11 +55,32 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="write a backup of the database and exit",
     )
     parser.add_argument(
+        "--day-report",
+        metavar="DATE",
+        nargs="?",
+        const="today",
+        help="write the end-of-day sheet as a PDF and exit (default: today)",
+    )
+    parser.add_argument(
         "--data-dir",
         metavar="PATH",
         help="store the database and receipts in this folder instead of the default",
     )
     return parser.parse_args(argv)
+
+
+def _say(text: str = "") -> None:
+    """Print prose to a console that may not be able to spell it.
+
+    A Windows console is often still cp1252, and the messages here are written
+    for people, with the dashes and quotes that implies. Losing a character is
+    acceptable; a UnicodeEncodeError in a recovery command is not.
+    """
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "ascii"
+        print(text.encode(encoding, "replace").decode(encoding, "replace"))
 
 
 def _reset_admin(password: str) -> int:
@@ -144,6 +165,34 @@ def _check() -> int:
     return 0 if result == "ok" else 2
 
 
+def _day_report(date: str) -> int:
+    """Write the end-of-day sheet without opening the app.
+
+    Useful on a machine that closes up unattended, and as a way to reprint a
+    past day from a support call without walking somebody through the screens.
+    """
+    from app import receipts
+    from app.money import fmt_usd
+    from app.services import dayend
+
+    date = None if date == "today" else date
+    try:
+        summary = dayend.day_summary(date)
+        path = receipts.generate_day_report(date)
+    except Exception as exc:  # noqa: BLE001 - reportlab, a bad date, or a disk problem
+        print(f"Could not create the day report: {exc}", file=sys.stderr)
+        return 1
+
+    _say(f"Day report for {summary['date']} written to {path}")
+    _say(f"  {'Sales:':<20}{summary['sale_count']}  {fmt_usd(summary['revenue'])} net")
+    _say(f"  {'Gross profit:':<20}{fmt_usd(summary['gross_profit'])} "
+         f"({summary['margin']:.1f}%)")
+    _say(f"  {'Cash expected:':<20}{fmt_usd(summary['expected_usd'])}")
+    for note in dayend.warnings(summary):
+        _say(f"  ! {note}")
+    return 0
+
+
 def _backup() -> int:
     from app.services import backups
 
@@ -173,7 +222,8 @@ def main(argv=None) -> int:
     from app import db
 
     # Every command below needs a database, and init_db is idempotent.
-    if args.reset_admin or args.unlock or args.check or args.backup:
+    if (args.reset_admin or args.unlock or args.check or args.backup
+            or args.day_report):
         db.init_db()
 
     if args.reset_admin:
@@ -184,6 +234,8 @@ def main(argv=None) -> int:
         return _check()
     if args.backup:
         return _backup()
+    if args.day_report:
+        return _day_report(args.day_report)
 
     from app.ui.app import run
 

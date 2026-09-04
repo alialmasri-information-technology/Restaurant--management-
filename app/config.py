@@ -15,7 +15,7 @@ from pathlib import Path
 
 APP_NAME = "RE4"
 APP_TITLE = "RE4 — Business & Retail Management"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 
 IS_FROZEN = getattr(sys, "frozen", False)
 

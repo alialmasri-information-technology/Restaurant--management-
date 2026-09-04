@@ -1,4 +1,4 @@
-"""PDF receipts, return slips and till reports.
+"""PDF receipts, return slips, till reports and the end-of-day sheet.
 
 Everything here is drawn on a roll-shaped page whose height grows with the
 number of lines, so a two-item receipt is not padded out to A4. The width comes
@@ -22,6 +22,7 @@ from reportlab.pdfgen import canvas
 
 from app import config
 from app.money import D, fmt_lbp, fmt_usd, to_lbp
+from app.services import dayend as dayend_service
 from app.services import returns as returns_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
@@ -418,4 +419,163 @@ def build_shift_report(shift, totals, store, rate, rounding, kind, layout: Layou
     builder.add("small", "In LBP", fmt_lbp(to_lbp(totals["expected_usd"], rate, rounding)))
 
     builder.footer()
+    return builder
+
+
+# --------------------------------------------------------------------------- #
+# End-of-day sheet
+# --------------------------------------------------------------------------- #
+
+def generate_day_report(date=None, path=None, width_mm=None) -> Path:
+    """The whole trading day on one sheet, for the person locking up.
+
+    Printed on the same roll as everything else on purpose: a shop that has a
+    thermal printer at the till usually has nothing else, and a report that
+    cannot be printed where it is needed does not get read.
+    """
+    summary = dayend_service.day_summary(date)
+    store = settings_service.store_info()
+    rate = settings_service.exchange_rate()
+    rounding = settings_service.lbp_rounding()
+
+    builder = build_day_report(summary, store, rate, rounding, layout_for(width_mm))
+    path = Path(path) if path else default_path(f"day-report-{summary['date']}")
+    return render(builder, path, f"Day report - {summary['date']}")
+
+
+def build_day_report(summary, store, rate, rounding, layout: Layout) -> Builder:
+    builder = Builder(layout)
+    builder.header(store, f"END OF DAY - {summary['date']}")
+
+    # Anything unfinished goes at the top. A day that does not reconcile is
+    # discovered a week later otherwise, when nobody can explain it.
+    notes = dayend_service.warnings(summary)
+    if notes:
+        builder.add("bold", "NEEDS ATTENTION")
+        for note in notes:
+            builder.wrapped("small", f"* {note}")
+        builder.rule()
+
+    # -- 1. trading ---------------------------------------------------------- #
+    builder.add("bold", "Trading")
+    builder.add("normal", f"Sales ({summary['sale_count']})", fmt_usd(summary["gross_revenue"]))
+    if summary["discounts"]:
+        builder.add("small", "   after discounts of", fmt_usd(summary["discounts"]))
+    if summary["refund_count"]:
+        builder.add(
+            "normal", f"Returns ({summary['refund_count']})",
+            f"-{fmt_usd(summary['refund_total'])}",
+        )
+    builder.add("total", "NET REVENUE", fmt_usd(summary["revenue"]))
+    builder.add(
+        "small", "In LBP", fmt_lbp(to_lbp(summary["revenue"], rate, rounding))
+    )
+    if summary["tax"]:
+        builder.add("small", "   of which tax", fmt_usd(summary["tax"]))
+    builder.add(
+        "normal", "Gross profit",
+        f"{fmt_usd(summary['gross_profit'])}  ({summary['margin']:.1f}%)",
+    )
+    builder.add("small", "Items sold", str(summary["units"]))
+    builder.add("small", "Average sale", fmt_usd(summary["average_sale"]))
+
+    if summary["payment_mix"]:
+        builder.gap()
+        builder.add("bold", "Taken as")
+        for row in summary["payment_mix"]:
+            builder.add(
+                "small", f"   {row['payment_method']} ({row['sale_count']})",
+                fmt_usd(row["revenue"]),
+            )
+
+    if summary["by_user"]:
+        builder.gap()
+        builder.add("bold", "Served by")
+        for row in summary["by_user"]:
+            builder.add(
+                "small", f"   {row['name']} ({row['sale_count']})", fmt_usd(row["revenue"])
+            )
+
+    if summary["top_products"]:
+        builder.gap()
+        builder.add("bold", "Best sellers")
+        for row in summary["top_products"]:
+            builder.add("small", f"   {row['units']} x {row['name']}", fmt_usd(row["revenue"]))
+
+    # -- 2. the money -------------------------------------------------------- #
+    builder.rule()
+    builder.add("bold", f"Cash drawers ({summary['shift_count']})")
+    if not summary["shifts"]:
+        builder.add("small", "   No till shift was opened.")
+    for shift in summary["shifts"]:
+        who = shift["opened_by_name"] or "-"
+        builder.add("normal", f"Till #{shift['shift_id']} - {who}", "")
+        builder.add(
+            "small", f"   {str(shift['opened_at'])[11:16]}"
+            + (f" to {str(shift['closed_at'])[11:16]}" if shift["closed_at"] else " - still open"),
+            "",
+        )
+        builder.add("small", "   Expected", fmt_usd(shift["totals"]["expected_usd"]))
+        if shift["is_open"]:
+            builder.add("small", "   Counted", "not yet")
+            continue
+        builder.add("small", "   Counted", fmt_usd(shift["counted_usd"]))
+        variance = D(shift["variance_usd"])
+        label = "over" if variance > 0 else ("short" if variance < 0 else "balanced")
+        builder.add("small", f"   Variance ({label})", fmt_usd(variance))
+
+    if summary["shift_count"]:
+        builder.add("normal", "Expected across the day", fmt_usd(summary["expected_usd"]))
+        builder.add("normal", "Counted", fmt_usd(summary["counted_usd"]))
+        variance = D(summary["variance_usd"])
+        label = "OVER" if variance > 0 else ("SHORT" if variance < 0 else "BALANCED")
+        builder.add("total", f"VARIANCE ({label})", fmt_usd(variance))
+
+    # -- 3. what is outstanding ---------------------------------------------- #
+    account = summary["account"]
+    if any(account.get(key) for key in
+           ("charged", "collected", "credited", "adjusted", "closing_receivable")):
+        builder.rule()
+        builder.add("bold", "Customer accounts")
+        if account.get("charged"):
+            builder.add("normal", "Put on account today", fmt_usd(account["charged"]))
+        if account.get("collected"):
+            builder.add("normal", "Paid off today", f"-{fmt_usd(account['collected'])}")
+            if account.get("collected_cash"):
+                builder.add(
+                    "small", "   of which cash (in the drawer)",
+                    fmt_usd(account["collected_cash"]),
+                )
+        if account.get("credited"):
+            builder.add("small", "Returned to account", f"-{fmt_usd(account['credited'])}")
+        if account.get("adjusted"):
+            builder.add("small", "Adjustments", fmt_usd(account["adjusted"]))
+        builder.add("total", "OWED TO YOU", fmt_usd(account.get("closing_receivable", 0)))
+
+    # -- 4. everything else that moved --------------------------------------- #
+    purchases = summary["purchases"]
+    takes = summary["stock_takes"]
+    if purchases.get("order_count") or takes:
+        builder.rule()
+        builder.add("bold", "Stock")
+        if purchases.get("order_count"):
+            builder.add(
+                "normal", f"Received ({purchases['order_count']} order(s))",
+                fmt_usd(purchases["ordered_value"]),
+            )
+        for take in takes:
+            builder.add("normal", f"Count {take['reference']}", "")
+            builder.add(
+                "small", f"   {take['variance_units']:+} unit(s) at cost",
+                fmt_usd(take["variance_usd"]),
+            )
+
+    # -- sign-off ------------------------------------------------------------ #
+    builder.rule()
+    builder.gap()
+    builder.add("small", "Counted by ______________________")
+    builder.gap()
+    builder.add("small", "Checked by ______________________")
+
+    builder.footer(store)
     return builder

@@ -104,12 +104,20 @@ class TillView(ctk.CTkFrame):
         )
         self.x_button.grid(row=0, column=3, padx=(0, 8))
 
+        # Not tied to a shift: it covers the whole day, including drawers that
+        # have already been closed, so it stays available either way.
+        ctk.CTkButton(
+            actions, text="Day report", width=120, height=38,
+            fg_color=theme.PRIMARY, hover_color=theme.PRIMARY_HOVER,
+            command=self.print_day_report,
+        ).grid(row=0, column=4, padx=(0, 8))
+
         self.close_button = ctk.CTkButton(
             actions, text="Close till", width=120, height=38,
             fg_color=theme.DANGER, hover_color=theme.DANGER_HOVER,
             command=self.close_shift,
         )
-        self.close_button.grid(row=0, column=4)
+        self.close_button.grid(row=0, column=5)
 
     def _build_body(self) -> None:
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -349,6 +357,9 @@ class TillView(ctk.CTkFrame):
             "Till closed",
         )
         receipt_actions.print_shift_report(self, shift_id, kind="Z")
+
+    def print_day_report(self) -> None:
+        receipt_actions.print_day_report(self)
 
     def print_report(self, kind: str = "X") -> None:
         if self.shift is None:

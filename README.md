@@ -16,13 +16,13 @@ audit trail of who did what.
 | --- | --- |
 | **Dashboard** | Revenue today and this month, gross profit, stock value, a 7-day revenue chart, restock alerts and recent sales |
 | **New Sale** | Scan a barcode or search, build a cart, override a price, discount a line, park a sale and pick it up later, take payment in USD or LBP, print a receipt |
-| **Till** | Open a shift with a counted float, record cash in and out, take an X report mid-shift, close with a count that reports the variance and prints a Z report |
+| **Till** | Open a shift with a counted float, record cash in and out, take an X report mid-shift, close with a count that reports the variance and prints a Z report, print the end-of-day sheet |
 | **Invoices** | Search past sales; view line-by-line detail; reprint or save the PDF; return part of an invoice or refund all of it |
 | **Products** | Catalogue with cost, price, barcode, supplier, stock and reorder level; product photos; barcode label sheets; CSV import and export; stock adjustments with a full movement history |
 | **Stock take** | Count the shelves against the system: scan or type, see the variance in units and at cost as you go, and post it when it is signed off |
 | **Purchasing** | Suppliers, purchase orders, receiving stock against an order at weighted-average cost, and a reorder list that can raise the orders for you |
 | **Customers** | Contact details, lifetime spend, purchase history, and accounts: a credit limit, what is owed, a statement, and taking payment against it |
-| **Reports** | Revenue net of returns, margin, best sellers, top customers, payment mix, sales per user, stock valuation, dead stock, money owed to you, CSV export |
+| **Reports** | Revenue net of returns, margin, best sellers, top customers, payment mix, sales per user, stock valuation, dead stock, money owed to you, the end-of-day sheet for any past day, CSV export |
 | **Users** | Admin and Employee accounts, password resets, activation |
 | **Settings** | Store details, exchange rate, tax, printer and receipt width, screen lock and sign-in throttling, backups and restore, the audit log, light/dark theme |
 
@@ -265,6 +265,44 @@ who owe, and totals the receivable; anyone at or over their limit is flagged, so
 the person on the counter sees it before they try. *Reports* carries the same
 total and the list behind it, and `--check` prints it from the command line.
 
+## Closing the day
+
+Everything needed to close up was already recorded, but it was scattered: the Z
+report knew about one drawer, *Reports* knew about revenue and margin,
+*Customers* knew what was owed, and nothing tied a day together. *Till → Day
+report* prints the lot on one sheet, in the order the person locking the door
+works through it:
+
+1. **Anything unfinished, first.** A till still open, a drawer that did not come
+   back to its expected figure, sales taken with no shift open. These are the
+   things that get discovered a week later, when nobody remembers the day well
+   enough to explain them.
+2. **Did we trade well?** Sales, discounts, returns netted off, net revenue in
+   USD and LBP, tax, gross profit and margin, units, average sale, what it was
+   taken as, who served, and the five best sellers.
+3. **Does the money add up?** Every drawer opened that day, expected against
+   counted, with the day's total variance underneath. An uncounted drawer reads
+   as *not yet counted* — never as balanced.
+4. **What is still outstanding?** Put on account today, paid off today (and how
+   much of that is cash sitting in the drawer), and the receivable being carried
+   into tomorrow.
+5. **What moved that was not a sale?** Stock received, and any stock take posted
+   with its variance at cost.
+
+Then two sign-off lines, for whoever counted and whoever checked.
+
+The day is bounded by the date, not by a shift, so a drawer left open overnight
+belongs to the day it opened rather than quietly disappearing from both days. It
+prints on the same roll as every other document, because a shop with a thermal
+printer at the till usually has nothing else.
+
+Reprint any past day from *Reports → Day report*, or from the command line:
+
+```bash
+python main.py --day-report              # today
+python main.py --day-report 2026-08-31   # any past day
+```
+
 ## Money handling
 
 Prices are stored in USD. Every amount is computed with `decimal.Decimal` and
@@ -290,14 +328,14 @@ app/
   db.py                  schema, migrations, connections, demo data
   auth.py                password hashing, sign-in, user management
   money.py               Decimal arithmetic, USD/LBP conversion
-  receipts.py            receipts, return slips and X/Z till reports (ReportLab)
+  receipts.py            receipts, slips, X/Z reports and the day sheet (ReportLab)
   labels.py              Code128 barcode label sheets
   printing.py            sending a PDF to a printer
   logs.py                rolling application log
   services/              business logic, free of any UI imports
     products.py    customers.py   sales.py       reports.py    settings.py
     shifts.py      returns.py     purchases.py   suppliers.py   accounts.py
-    catalog_io.py  backups.py     audit.py       stocktake.py
+    catalog_io.py  backups.py     audit.py       stocktake.py   dayend.py
   ui/
     app.py               root window, login/shell swap
     shell.py             sidebar navigation and page header
@@ -308,7 +346,7 @@ app/
     products_view.py     purchasing_view.py customers_view.py
     invoices_view.py     reports_view.py    users_view.py
     settings_view.py     stocktake_view.py  receipt_actions.py
-tests/                   350 tests over the service layer and every screen
+tests/                   388 tests over the service layer and every screen
 pyproject.toml           metadata, the `re4` entry point, Ruff configuration
 RE4.spec                 PyInstaller build definition
 .github/workflows/ci.yml lint, test on three platforms, build the executable
@@ -325,13 +363,15 @@ rules directly testable.
 python -m unittest discover -s tests -t .
 ```
 
-350 tests, about 21 seconds. They cover money arithmetic, password hashing and
+388 tests, about 25 seconds. They cover money arithmetic, password hashing and
 the admin guards, sign-in throttling and forced password changes, stock
 movements, the checkout pipeline (including rollback when stock runs out
 mid-sale), invoice numbering, partial returns and their pricing, till shifts and
 reconciliation, customer accounts (credit limits, part payments, LBP conversion,
-returns against a debt, and that cash on an account reaches the drawer), stock
-takes (including that selling during a count survives it), purchase orders and
+returns against a debt, and that cash on an account reaches the drawer), the
+end-of-day sheet (including that a day is bounded by its date rather than by a
+shift, and that an old sheet reprints the receivable that stood at the end of
+that day), stock takes (including that selling during a count survives it), purchase orders and
 weighted-average costing, CSV import (including that a failure part-way through
 rolls the whole file back), backup and restore, reporting aggregates, barcode
 label geometry and PDF generation, and the v2 → v4 upgrade against a database
