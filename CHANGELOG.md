@@ -5,6 +5,53 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [2.2.0] — 2026-09-04
+
+Database schema v4. An existing shop database is migrated in place on first
+start; nothing needs to be reimported.
+
+### Added
+
+**Customer accounts.** `Credit` has been a payment method since 1.0 and recorded
+no debt: the goods left the shop and the money was forgotten. It is now a real
+account.
+
+- Every movement writes one signed row in a ledger — a credit sale adds, a
+  payment or a refund subtracts, an owner's adjustment does either — and the
+  balance is their sum. It is never a stored column, so it cannot drift out of
+  step with the rows that explain it.
+- *Statement* shows every movement in order with a running balance and the
+  invoice or return number beside each one. A wrong payment is reversed with a
+  visible adjustment rather than by deleting history; adjusting is admin-only.
+- **Credit limits.** A customer with no limit cannot buy on account at all, so
+  credit is granted rather than handed out by picking the wrong payment method
+  in a hurry. The limit is checked *before* the invoice is written, so a refusal
+  costs the cashier a payment method, not a half-committed sale.
+- *Take a payment* accepts USD or LBP at the rate in force, in full or in part,
+  by any payment method. Overpayment is refused — at a counter that is nearly
+  always a typo.
+- **Cash paid against an account reaches the till.** It is attached to the open
+  shift and counted into the expected drawer figure, so a close no longer comes
+  up over, and both the X and Z reports print it.
+- Returning goods from a credit sale reduces the debt instead of paying cash out
+  of a drawer that never took any in. Refunding to *Credit* on a sale with no
+  customer is refused.
+- *Customers* gained Owes and Limit columns, an "Owing only" filter, the total
+  receivable, and a flag on anyone at or over their limit. *Reports* carries the
+  same total with the list behind it, and `--check` prints it.
+- Payments, adjustments and limit changes are all audited.
+
+### Fixed
+
+- A sale on `Credit` recorded an amount paid and change due, as though money had
+  changed hands. It now records nothing paid and creates the debt instead.
+
+### Changed
+
+- Migration tests cover v2 → v4, including putting a sale on account against a
+  database migrated from before accounts existed.
+- 350 tests, up from 310.
+
 ## [2.1.0] — 2026-09-04
 
 Database schema v3. An existing shop database is migrated in place on first

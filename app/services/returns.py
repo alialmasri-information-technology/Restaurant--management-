@@ -14,6 +14,7 @@ import sqlite3
 
 from app import config, db
 from app.money import ZERO, D, to_float, usd
+from app.services import accounts as accounts_service
 from app.services import audit
 from app.services import products as products_service
 from app.services import settings as settings_service
@@ -124,6 +125,14 @@ def create_return(
     quoted = quote(sale_id, quantities)
     shift = shifts_service.current_shift()
     rate = settings_service.exchange_rate()
+    sale_customer_id = db.scalar(
+        "SELECT customer_id FROM sales WHERE sale_id = ?", (sale_id,)
+    )
+    if refund_method == "Credit" and sale_customer_id is None:
+        raise ReturnError(
+            "This sale has no customer, so there is no account to credit. "
+            "Refund it another way."
+        )
 
     with db.transaction() as conn:
         return_no = next_return_no(conn)
@@ -165,6 +174,16 @@ def create_return(
                     line["product_id"], line["qty"], reason="Return", user_id=user_id,
                     note=return_no, conn=conn,
                 )
+
+        if refund_method == "Credit" and sale_customer_id is not None:
+            # Goods off an account sale come back as a smaller debt, not as cash
+            # out of a drawer that never took any in.
+            accounts_service.credit_return(
+                sale_customer_id, return_id, quoted["total_usd"],
+                reference=return_no, sale_id=sale_id, user_id=user_id,
+                shift_id=shift["shift_id"] if shift else None,
+                conn=conn,
+            )
 
         outstanding = conn.execute(
             """

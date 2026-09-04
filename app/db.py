@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app import config, logs
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: How long a writer waits for a competing lock before giving up. Two tills on
 #: one database, or a backup running while a sale commits, otherwise surface as
@@ -228,6 +228,27 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+-- What each customer owes, as a running ledger rather than a single balance
+-- column. Every event that moves the debt writes one signed row: a credit sale
+-- adds, a payment or a refund subtracts. The balance is the sum, which means it
+-- can always be explained line by line — and a statement is just this table
+-- filtered to one customer.
+CREATE TABLE IF NOT EXISTS customer_ledger (
+    entry_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers (customer_id) ON DELETE CASCADE,
+    at          TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    kind        TEXT    NOT NULL CHECK (kind IN ('Sale', 'Payment', 'Refund', 'Adjustment')),
+    -- Signed: positive increases what the customer owes, negative reduces it.
+    amount_usd  REAL    NOT NULL,
+    sale_id     INTEGER REFERENCES sales (sale_id) ON DELETE SET NULL,
+    return_id   INTEGER REFERENCES returns (return_id) ON DELETE SET NULL,
+    shift_id    INTEGER REFERENCES shifts (shift_id) ON DELETE SET NULL,
+    user_id     INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    method      TEXT    NOT NULL DEFAULT '',
+    reference   TEXT    NOT NULL DEFAULT '',
+    note        TEXT    NOT NULL DEFAULT ''
+);
+
 -- One row per username that has recently failed to sign in. Cleared on a
 -- successful sign-in, so a shop that never gets its password wrong stays empty.
 CREATE TABLE IF NOT EXISTS login_throttle (
@@ -280,6 +301,8 @@ CREATE INDEX IF NOT EXISTS idx_cash_shift        ON cash_movements (shift_id);
 CREATE INDEX IF NOT EXISTS idx_po_items_po       ON purchase_order_items (po_id);
 CREATE INDEX IF NOT EXISTS idx_audit_at          ON audit_log (at);
 CREATE INDEX IF NOT EXISTS idx_take_items_take  ON stock_take_items (stock_take_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_customer  ON customer_ledger (customer_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_sale      ON customer_ledger (sale_id);
 """
 
 # Columns added after v1. Applied idempotently so an existing shop database is
@@ -294,6 +317,8 @@ ADDED_COLUMNS = (
     # v3
     ("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "last_login_at", "TEXT"),
+    # v4
+    ("customers", "credit_limit_usd", "REAL NOT NULL DEFAULT 0"),
 )
 
 LATE_INDEXES = (

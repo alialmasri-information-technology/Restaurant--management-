@@ -156,6 +156,18 @@ def totals(shift_id: int) -> dict:
         """,
         (shift_id,),
     )
+    # Money taken against a customer account goes into the same drawer, so it
+    # has to reach the expected figure or the close will come up short.
+    account_row = db.query_one(
+        """
+        SELECT COALESCE(SUM(-amount_usd), 0) AS account_payments,
+               COALESCE(SUM(CASE WHEN method = 'Cash' THEN -amount_usd ELSE 0 END), 0)
+                   AS cash_account_payments
+        FROM customer_ledger
+        WHERE shift_id = ? AND kind = 'Payment'
+        """,
+        (shift_id,),
+    )
     cash_row = db.query_one(
         """
         SELECT COALESCE(SUM(CASE WHEN kind = 'In' THEN amount_usd ELSE 0 END), 0)  AS cash_in,
@@ -169,6 +181,7 @@ def totals(shift_id: int) -> dict:
     expected = (
         D(shift["opening_float_usd"])
         + D(sales_row["cash_sales"])
+        + D(account_row["cash_account_payments"])
         + D(cash_row["cash_in"])
         - D(cash_row["cash_out"])
         - D(returns_row["cash_returns"])
@@ -186,6 +199,8 @@ def totals(shift_id: int) -> dict:
         "cash_returns": returns_row["cash_returns"],
         "cash_in": cash_row["cash_in"],
         "cash_out": cash_row["cash_out"],
+        "account_payments": account_row["account_payments"],
+        "cash_account_payments": account_row["cash_account_payments"],
         "expected_usd": to_float(expected),
     }
 

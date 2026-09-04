@@ -9,6 +9,14 @@ from app import db
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+#: What the customer owes, as a correlated subquery. Named once because it is
+#: needed both as a selected column and as a filter — and a HAVING clause cannot
+#: stand in for the latter, since nothing here is grouped.
+BALANCE = """
+    COALESCE((SELECT SUM(l.amount_usd) FROM customer_ledger l
+               WHERE l.customer_id = c.customer_id), 0)
+"""
+
 
 class CustomerError(Exception):
     """Raised for user-facing customer failures."""
@@ -23,20 +31,27 @@ _SELECT = """
              WHERE s.customer_id = c.customer_id AND s.status = 'Completed'), 0)
                AS total_spent_usd,
            (SELECT MAX(s.sale_time) FROM sales s
-             WHERE s.customer_id = c.customer_id) AS last_purchase
+             WHERE s.customer_id = c.customer_id) AS last_purchase,
+           {BALANCE} AS balance_usd
     FROM customers c
-"""
+""".replace("{BALANCE}", BALANCE)
 
 
-def list_customers(search: str = "") -> list[sqlite3.Row]:
+def list_customers(search: str = "", *, owing_only: bool = False) -> list[sqlite3.Row]:
     sql = _SELECT
-    params: tuple = ()
+    clauses: list[str] = []
+    params: list = []
     if search and search.strip():
-        sql += " WHERE c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?"
+        clauses.append("(c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ?)")
         pattern = f"%{search.strip()}%"
-        params = (pattern, pattern, pattern)
+        params += [pattern, pattern, pattern]
+    if owing_only:
+        clauses.append(f"{BALANCE} > 0.005")
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+
     sql += " ORDER BY c.name COLLATE NOCASE"
-    return db.query(sql, params)
+    return db.query(sql, tuple(params))
 
 
 def get_customer(customer_id: int) -> sqlite3.Row | None:

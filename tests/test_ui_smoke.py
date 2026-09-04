@@ -206,3 +206,87 @@ class StockTakeScreenTests(DatabaseTestCase):
 
         line = stocktake_service.list_items(self.take_id)[0]
         self.assertEqual(line["counted_qty"], 1)
+
+
+@unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
+class CustomerAccountScreenTests(DatabaseTestCase):
+    """The customers screen with a real debt behind it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from app.services import accounts
+        from app.services import customers as customers_service
+
+        self.product_id = products_service.create_product(
+            sku="ACC-1", name="On Account", price_usd=20, cost_usd=8, stock_qty=50
+        )
+        self.customer_id = customers_service.create_customer(name="Owing Customer")
+        accounts.set_credit_limit(self.customer_id, 200)
+
+        cart = sales_service.Cart()
+        cart.add_product(products_service.get_product(self.product_id), 3)
+        sales_service.create_sale(
+            user_id=self.admin.user_id, cart=cart,
+            customer_id=self.customer_id, payment_method="Credit",
+        )
+
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(self._destroy_root)
+
+    def _destroy_root(self) -> None:
+        _tear_down(self.root)
+
+    def _shell(self):
+        from app.ui.shell import AppShell
+
+        shell = AppShell(self.root, self.admin, lambda: None)
+        shell.grid(row=0, column=0, sticky="nsew")
+        self.root.update_idletasks()
+        return shell
+
+    def test_the_customer_list_shows_the_balance(self):
+        shell = self._shell()
+        shell.show("customers")
+        self.root.update_idletasks()
+
+        view = shell._views["customers"]
+        row = customers_service.list_customers()[0]
+        self.assertAlmostEqual(row["balance_usd"], 60.0, places=2)
+        self.assertIn("60", view.receivable_label.cget("text"))
+
+    def test_the_owing_filter_narrows_the_list(self):
+        from app.services import customers as customers_service
+
+        customers_service.create_customer(name="Owes Nothing")
+        shell = self._shell()
+        shell.show("customers")
+        self.root.update_idletasks()
+
+        view = shell._views["customers"]
+        view.owing_only.select()
+        view.refresh()
+        self.root.update_idletasks()
+        self.assertEqual(len(view.table.tree.get_children()), 1)
+
+    def test_the_statement_builds_with_a_running_balance(self):
+        from app.ui.customers_view import StatementModal
+
+        shell = self._shell()
+        shell.show("customers")
+        self.root.update_idletasks()
+
+        customer = customers_service.get_customer(self.customer_id)
+        modal = StatementModal(self.root, customer, shell)
+        self.root.update_idletasks()
+        self.assertEqual(len(modal.table.tree.get_children()), 1)
+        self.assertIn("60", modal.heading.cget("text"))
+        modal.on_cancel()
+
+    def test_the_reports_screen_lists_the_debtor(self):
+        shell = self._shell()
+        shell.show("reports")
+        self.root.update_idletasks()
+
+        view = shell._views["reports"]
+        self.assertEqual(len(view.owed.tree.get_children()), 1)

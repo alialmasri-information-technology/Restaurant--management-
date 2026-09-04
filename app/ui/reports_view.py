@@ -9,6 +9,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from app.money import D, fmt_lbp, fmt_usd, to_lbp
+from app.services import accounts as accounts_service
 from app.services import reports as reports_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
@@ -106,6 +107,20 @@ class ReportsView(ctk.CTkScrollableFrame):
              ("revenue", "Revenue", 110, "e")],
             "name",
         )
+        # Receivables are not filtered by the date range: what is owed is owed
+        # today regardless of which month it was rung up in.
+        self.owed = self._table_card(
+            grid, 2, 0, "Owed to you",
+            [("name", "Customer", 180, "w"), ("phone", "Phone", 110, "w"),
+             ("oldest_charge", "Oldest charge", 120, "w"),
+             ("balance_usd", "Balance", 100, "e")],
+            "customer_id",
+        )
+        self.owed.set_formatter("balance_usd", lambda value, _row: fmt_usd(value))
+        self.owed.set_formatter(
+            "oldest_charge", lambda value, _row: (value or "")[:10] or "—"
+        )
+        self.owed.set_formatter("phone", lambda value, _row: value or "—")
 
     def _table_card(self, parent, row, column, title, columns, id_key) -> DataTable:
         card = Card(parent)
@@ -214,7 +229,24 @@ class ReportsView(ctk.CTkScrollableFrame):
         self.by_payment.set_rows(reports_service.payment_breakdown(date_from, date_to))
         self.by_user.set_rows(reports_service.sales_by_user(date_from, date_to))
 
-        label = self.range_var.get().lower()
-        self.header.set_subtitle(
-            f"{label} · {date_from or 'start'} → {date_to or 'today'}"
+        owing = accounts_service.outstanding()
+        receivable = accounts_service.total_receivable()
+        self.owed.set_rows(
+            owing,
+            tag_func=lambda row: (
+                "danger"
+                if row["credit_limit_usd"]
+                and row["balance_usd"] >= row["credit_limit_usd"] - 0.005
+                else "warning"
+            ),
+            empty_message="Nobody owes you anything.",
         )
+
+        label = self.range_var.get().lower()
+        subtitle = f"{label} · {date_from or 'start'} → {date_to or 'today'}"
+        if receivable:
+            subtitle += (
+                f"   ·   {fmt_usd(receivable)} owed on account "
+                f"by {len(owing)} customer(s)"
+            )
+        self.header.set_subtitle(subtitle)

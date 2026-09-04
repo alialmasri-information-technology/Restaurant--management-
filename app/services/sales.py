@@ -11,6 +11,7 @@ from decimal import Decimal
 from app import config, db
 from app.money import ZERO, D, compute_totals, to_float, usd
 from app.money import line_total as compute_line_total
+from app.services import accounts as accounts_service
 from app.services import audit
 from app.services import products as products_service
 from app.services import returns as returns_service
@@ -307,6 +308,9 @@ def create_sale(
 
     subtotal, discount, tax, total = cart.totals(tax_rate=tax_rate)
 
+    if customer_id is None:
+        customer_id = cart.customer_id
+
     paid = D(amount_paid)
     paid_usd = usd(paid / exchange_rate) if paid_currency == "LBP" else usd(paid)
     if payment_method == "Cash" and paid_usd < total:
@@ -315,8 +319,18 @@ def create_sale(
         )
     change = usd(max(ZERO, paid_usd - total))
 
-    if customer_id is None:
-        customer_id = cart.customer_id
+    if payment_method == "Credit":
+        # Nothing is handed over, so nothing is recorded as paid — the invoice
+        # becomes a debt instead. Checked before the sale is written, so a
+        # customer over their limit costs the cashier a payment method, not a
+        # half-committed invoice.
+        try:
+            accounts_service.check_can_charge(customer_id, total)
+        except accounts_service.AccountError as exc:
+            raise SaleError(str(exc)) from exc
+        paid = ZERO
+        paid_usd = ZERO
+        change = ZERO
 
     with db.transaction() as conn:
         invoice_no = next_invoice_no(conn)
@@ -390,6 +404,16 @@ def create_sale(
                 user_id=user_id,
                 note=invoice_no,
                 sale_id=sale_id,
+                conn=conn,
+            )
+
+        if payment_method == "Credit":
+            # Same transaction as the invoice: a sale on account and the debt it
+            # creates must both exist, or neither.
+            accounts_service.charge_sale(
+                customer_id, sale_id, total,
+                invoice_no=invoice_no, user_id=user_id,
+                shift_id=shift["shift_id"] if shift else None,
                 conn=conn,
             )
 

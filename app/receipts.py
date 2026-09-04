@@ -373,6 +373,12 @@ def build_shift_report(shift, totals, store, rate, rounding, kind, layout: Layou
     builder.add("bold", "Cash drawer")
     builder.add("normal", "Opening float", fmt_usd(totals["opening_float"]))
     builder.add("normal", "Cash sales", fmt_usd(totals["cash_sales"]))
+    # Money taken against a customer account is in the drawer too, and the
+    # count will not reconcile unless the report says where it came from.
+    if totals.get("cash_account_payments"):
+        builder.add(
+            "normal", "Account payments", fmt_usd(totals["cash_account_payments"])
+        )
     if totals["cash_in"]:
         builder.add("normal", "Paid in", fmt_usd(totals["cash_in"]))
     if totals["cash_out"]:
@@ -404,6 +410,11 @@ def build_shift_report(shift, totals, store, rate, rounding, kind, layout: Layou
     builder.add(
         "small", "Non-cash taken", fmt_usd(totals["non_cash_sales"])
     )
+    non_cash_account = D(totals.get("account_payments", 0)) - D(
+        totals.get("cash_account_payments", 0)
+    )
+    if non_cash_account:
+        builder.add("small", "Account paid by card/transfer", fmt_usd(non_cash_account))
     builder.add("small", "In LBP", fmt_lbp(to_lbp(totals["expected_usd"], rate, rounding)))
 
     builder.footer()

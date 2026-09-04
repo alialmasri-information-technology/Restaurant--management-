@@ -21,15 +21,16 @@ audit trail of who did what.
 | **Products** | Catalogue with cost, price, barcode, supplier, stock and reorder level; product photos; barcode label sheets; CSV import and export; stock adjustments with a full movement history |
 | **Stock take** | Count the shelves against the system: scan or type, see the variance in units and at cost as you go, and post it when it is signed off |
 | **Purchasing** | Suppliers, purchase orders, receiving stock against an order at weighted-average cost, and a reorder list that can raise the orders for you |
-| **Customers** | Contact details, lifetime spend, purchase history |
-| **Reports** | Revenue net of returns, margin, best sellers, top customers, payment mix, sales per user, stock valuation, dead stock, CSV export |
+| **Customers** | Contact details, lifetime spend, purchase history, and accounts: a credit limit, what is owed, a statement, and taking payment against it |
+| **Reports** | Revenue net of returns, margin, best sellers, top customers, payment mix, sales per user, stock valuation, dead stock, money owed to you, CSV export |
 | **Users** | Admin and Employee accounts, password resets, activation |
 | **Settings** | Store details, exchange rate, tax, printer and receipt width, screen lock and sign-in throttling, backups and restore, the audit log, light/dark theme |
 
 **Roles.** *Admin* sees everything. *Employee* can make sales, run the till, view
-invoices, manage customers, adjust stock and count a stock take — but not edit
-the catalogue, post a stock take, raise purchase orders, view reports, or touch
-users and settings.
+invoices, manage customers, take payments against an account, adjust stock and
+count a stock take — but not edit the catalogue, post a stock take, adjust a
+customer's balance, raise purchase orders, view reports, or touch users and
+settings.
 
 ### Keyboard at the till
 
@@ -229,6 +230,41 @@ A count can be abandoned at any point with no effect on stock, and past counts
 are kept, so a pattern of shrinkage in one aisle becomes visible over time. Staff
 can count; only an administrator can post the variance.
 
+## Selling on account
+
+*Credit* has always been one of the payment methods. Until 2.2 it recorded no
+debt — the goods went out of the door and the money was simply forgotten. It is
+now a real account.
+
+**Set a limit first.** *Customers → Credit limit*. A customer with no limit
+cannot buy on account at all; that is deliberate, so credit is something granted
+rather than something a busy cashier can hand out by picking the wrong payment
+method. Before an invoice goes on account the balance plus this sale is checked
+against the limit, and the sale is refused *before* anything is written if it
+would go over — the cashier loses a payment method, not a half-finished sale.
+
+**The balance is a ledger, not a number.** Every movement writes one signed row:
+a credit sale adds, a payment or a refund subtracts, and an owner's adjustment
+does either. The balance is the sum of those rows, so it can never drift out of
+step with them, and *Statement* can explain every cent in order with the invoice
+or receipt number beside it. A mistaken payment is reversed with a visible
+adjustment, never by deleting history.
+
+**Taking the money back.** *Customers → Take a payment* accepts USD or LBP at
+the rate in force, in full or in part, by any payment method. A payment larger
+than the balance is refused — on a counter that is nearly always a typo. **Cash
+taken against an account reaches the till**: it is attached to the open shift and
+counted in the expected drawer figure, so the close does not come up over, and
+both the X and Z reports print it.
+
+**Returns off a credit sale reduce the debt** rather than paying cash out of a
+drawer that never took any in.
+
+*Customers* shows what each one owes and their limit, filters to just the people
+who owe, and totals the receivable; anyone at or over their limit is flagged, so
+the person on the counter sees it before they try. *Reports* carries the same
+total and the list behind it, and `--check` prints it from the command line.
+
 ## Money handling
 
 Prices are stored in USD. Every amount is computed with `decimal.Decimal` and
@@ -260,7 +296,7 @@ app/
   logs.py                rolling application log
   services/              business logic, free of any UI imports
     products.py    customers.py   sales.py       reports.py    settings.py
-    shifts.py      returns.py     purchases.py   suppliers.py
+    shifts.py      returns.py     purchases.py   suppliers.py   accounts.py
     catalog_io.py  backups.py     audit.py       stocktake.py
   ui/
     app.py               root window, login/shell swap
@@ -272,7 +308,7 @@ app/
     products_view.py     purchasing_view.py customers_view.py
     invoices_view.py     reports_view.py    users_view.py
     settings_view.py     stocktake_view.py  receipt_actions.py
-tests/                   310 tests over the service layer and every screen
+tests/                   350 tests over the service layer and every screen
 pyproject.toml           metadata, the `re4` entry point, Ruff configuration
 RE4.spec                 PyInstaller build definition
 .github/workflows/ci.yml lint, test on three platforms, build the executable
@@ -289,15 +325,18 @@ rules directly testable.
 python -m unittest discover -s tests -t .
 ```
 
-310 tests, about 25 seconds. They cover money arithmetic, password hashing and
+350 tests, about 21 seconds. They cover money arithmetic, password hashing and
 the admin guards, sign-in throttling and forced password changes, stock
 movements, the checkout pipeline (including rollback when stock runs out
 mid-sale), invoice numbering, partial returns and their pricing, till shifts and
-reconciliation, stock takes (including that selling during a count survives it),
-purchase orders and weighted-average costing, CSV import (including that a
-failure part-way through rolls the whole file back), backup and restore,
-reporting aggregates, barcode label geometry and PDF generation, and the
-v2 → v3 upgrade against a database shaped the way the last release left it.
+reconciliation, customer accounts (credit limits, part payments, LBP conversion,
+returns against a debt, and that cash on an account reaches the drawer), stock
+takes (including that selling during a count survives it), purchase orders and
+weighted-average costing, CSV import (including that a failure part-way through
+rolls the whole file back), backup and restore, reporting aggregates, barcode
+label geometry and PDF generation, and the v2 → v4 upgrade against a database
+shaped the way an older release left it — including putting a sale on account
+against a database migrated from before accounts existed.
 
 The last group builds every screen against a real, hidden Tk root and refreshes
 it. Nothing there asserts what a screen looks like — only that it can be built
@@ -322,11 +361,11 @@ CI runs the linter, then the suite on Linux, Windows and macOS across Python
 `users`, `categories`, `suppliers`, `products`, `customers`, `shifts`,
 `cash_movements`, `sales`, `sale_items`, `returns`, `return_items`,
 `parked_sales`, `purchase_orders`, `purchase_order_items`, `stock_takes`,
-`stock_take_items`, `inventory_log`, `audit_log`, `login_throttle`, `settings` —
-created automatically on first run and versioned through `PRAGMA user_version`,
-so an upgrade migrates an existing shop database rather than replacing it. The
-current schema is **v3**; a 2.0 database is migrated in place on first start and
-nothing needs reimporting.
+`stock_take_items`, `customer_ledger`, `inventory_log`, `audit_log`,
+`login_throttle`, `settings` — created automatically on first run and versioned
+through `PRAGMA user_version`, so an upgrade migrates an existing shop database
+rather than replacing it. The current schema is **v4**; an older database is
+migrated in place on first start and nothing needs reimporting.
 
 Three deliberate choices worth knowing:
 
@@ -341,6 +380,10 @@ Three deliberate choices worth knowing:
   discount is prorated across the returned units — so refunding one of four
   items on a discounted basket refunds the discounted price of that item, not
   the shelf price.
+
+- **A customer's balance is never stored.** `customer_ledger` holds one signed
+  row per movement and the balance is their sum. That costs one `SUM` per lookup
+  and buys a figure that can always be explained line by line.
 
 - **A stock take posts the difference it found, not the number it counted.** The
   count freezes what the system expected when it opened; applying it writes

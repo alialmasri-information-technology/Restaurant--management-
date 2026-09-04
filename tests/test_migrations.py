@@ -120,6 +120,39 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("login_throttle", names)
         self.assertIn("stock_takes", names)
         self.assertIn("stock_take_items", names)
+        self.assertIn("customer_ledger", names)
+
+    def test_the_credit_limit_column_is_added_to_customers(self):
+        self.build_v2()
+        self.migrate()
+        self.assertIn("credit_limit_usd", db.table_columns("customers"))
+
+    def test_a_migrated_database_can_take_a_sale_on_account(self):
+        """The whole v4 feature works on a database that predates it."""
+        from app.services import accounts
+        from app.services import customers as customers_service
+        from app.services import products as products_service
+        from app.services import sales as sales_service
+        from app.services import shifts as shifts_service
+
+        self.build_v2()
+        self.migrate()
+
+        owner = db.query_one("SELECT user_id FROM users WHERE username = 'owner'")
+        shifts_service.open_shift(owner["user_id"], opening_float=0)
+        product_id = products_service.create_product(
+            sku="MIG-1", name="Migrated", price_usd=10, stock_qty=5
+        )
+        customer_id = customers_service.create_customer(name="Migrated Customer")
+        accounts.set_credit_limit(customer_id, 100)
+
+        cart = sales_service.Cart()
+        cart.add_product(products_service.get_product(product_id), 2)
+        sales_service.create_sale(
+            user_id=owner["user_id"], cart=cart,
+            customer_id=customer_id, payment_method="Credit",
+        )
+        self.assertEqual(str(accounts.balance(customer_id)), "20.00")
 
     # -- what was already there -------------------------------------------- #
 

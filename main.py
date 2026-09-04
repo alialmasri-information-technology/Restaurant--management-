@@ -124,6 +124,14 @@ def _check() -> int:
     for label, sql in counts:
         print(f"  {label + ':':<20}{db.scalar(sql, default=0)}")
 
+    from app.money import fmt_usd
+    from app.services import accounts
+
+    owed = accounts.total_receivable()
+    if owed:
+        debtors = len(accounts.outstanding())
+        print(f"  {'Owed on account:':<20}{fmt_usd(owed)} from {debtors} customer(s)")
+
     locked = db.query(
         "SELECT username FROM login_throttle WHERE locked_until IS NOT NULL "
         "AND datetime(locked_until) > datetime('now', 'localtime')"
