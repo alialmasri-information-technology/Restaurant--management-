@@ -9,7 +9,7 @@ configurable step because nobody hands out 1 LBP in change.
 
 from __future__ import annotations
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0")
@@ -63,7 +63,7 @@ def parse_amount(text, field="amount") -> Decimal:
         return ZERO
     try:
         value = D(text)
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user as a message
+    except Exception as exc:  # any parse failure is surfaced as a message
         raise ValueError(f"{field.capitalize()} must be a number.") from exc
     if value < ZERO:
         raise ValueError(f"{field.capitalize()} cannot be negative.")

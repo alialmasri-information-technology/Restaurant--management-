@@ -1,19 +1,23 @@
-"""The root window: owns the database lifecycle and the login/shell swap."""
+"""The root window: owns the database lifecycle, the login/shell swap and the lock."""
 
 from __future__ import annotations
 
 import sys
+import time
 import traceback
 from tkinter import messagebox
 
 import customtkinter as ctk
 
-from app import config, db, logs
-from app.services import audit
-from app.services import backups
-from app.ui import theme
+from app import auth, config, db, logs
+from app.services import audit, backups
+from app.ui import security, theme
 from app.ui.login import LoginView
 from app.ui.shell import AppShell
+
+#: How often the idle timer looks at the clock. Coarse on purpose — the lock is
+#: measured in minutes, and a tighter tick would wake the process for nothing.
+IDLE_POLL_MS = 15_000
 
 
 class RE4App(ctk.CTk):
@@ -29,6 +33,8 @@ class RE4App(ctk.CTk):
 
         self.user = None
         self.current_frame: ctk.CTkFrame | None = None
+        self._lock_screen: ctk.CTkFrame | None = None
+        self._last_activity = time.monotonic()
 
         self._start_database()
         self._start_backup()
@@ -36,6 +42,11 @@ class RE4App(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self.quit_app)
         self.report_callback_exception = self._on_tk_error
+
+        # add="+" so these never displace a screen's own bindings.
+        for sequence in ("<Any-KeyPress>", "<Any-Button>", "<MouseWheel>"):
+            self.bind_all(sequence, self._note_activity, add="+")
+        self.after(IDLE_POLL_MS, self._idle_tick)
 
     # ------------------------------------------------------------------ #
 
@@ -81,10 +92,61 @@ class RE4App(ctk.CTk):
     # ------------------------------------------------------------------ #
 
     def _swap(self, frame: ctk.CTkFrame) -> None:
+        self._clear_lock()
         if self.current_frame is not None:
             self.current_frame.destroy()
         self.current_frame = frame
         frame.grid(row=0, column=0, sticky="nsew")
+
+    # ------------------------------------------------------------------ #
+    # Idle lock
+    # ------------------------------------------------------------------ #
+
+    def _note_activity(self, _event=None) -> None:
+        self._last_activity = time.monotonic()
+
+    @property
+    def is_locked(self) -> bool:
+        return self._lock_screen is not None
+
+    def _idle_tick(self) -> None:
+        try:
+            timeout = security.idle_lock_seconds()
+            if (
+                timeout
+                and self.user is not None
+                and not self.is_locked
+                and time.monotonic() - self._last_activity >= timeout
+            ):
+                self.lock_screen()
+        except Exception:  # noqa: BLE001 - a bad setting must not stop the timer
+            logs.exception("Idle lock check failed")
+        finally:
+            self.after(IDLE_POLL_MS, self._idle_tick)
+
+    def lock_screen(self, reason: str = "") -> None:
+        """Cover the shell without tearing it down, so the cart survives."""
+        if self.user is None or self.is_locked or self.current_frame is None:
+            return
+        self.current_frame.grid_remove()
+        self._lock_screen = security.LockScreen(
+            self, self.user, self._unlock, self.show_login, reason=reason
+        )
+        self._lock_screen.grid(row=0, column=0, sticky="nsew")
+        audit.record("Screen locked", "user", self.user.user_id, reason)
+
+    def _unlock(self) -> None:
+        self._clear_lock()
+        if self.current_frame is not None:
+            self.current_frame.grid(row=0, column=0, sticky="nsew")
+        self._note_activity()
+        if self.user is not None:
+            audit.record("Screen unlocked", "user", self.user.user_id)
+
+    def _clear_lock(self) -> None:
+        if self._lock_screen is not None:
+            self._lock_screen.destroy()
+            self._lock_screen = None
 
     def show_login(self) -> None:
         if self.user is not None:
@@ -100,9 +162,27 @@ class RE4App(ctk.CTk):
         # this point on is attributed without threading a user through it.
         audit.set_actor(user)
         self.title(f"{config.APP_TITLE} — {user.display_name} ({user.role})")
+        self._note_activity()
         self._swap(AppShell(self, user, self.show_login))
+        if user.must_change_password:
+            self.after(200, self._force_password_change)
+
+    def _force_password_change(self) -> None:
+        """A temporary password gets one screen and no way past it."""
+        user = self.user
+        if user is None:
+            return
+
+        def done() -> None:
+            refreshed = auth.get_user(user.user_id)
+            if refreshed is not None:
+                self.user = refreshed
+                audit.set_actor(refreshed)
+
+        security.ForcedPasswordChange(self, user, done, self.show_login)
 
     def quit_app(self) -> None:
+        self._clear_lock()
         if self.user is not None:
             audit.record("Signed out", "user", self.user.user_id)
         logs.info("%s closing", config.APP_NAME)

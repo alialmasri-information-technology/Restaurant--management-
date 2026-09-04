@@ -9,7 +9,6 @@ import customtkinter as ctk
 
 from app.ui import theme
 
-
 # --------------------------------------------------------------------------- #
 # Message helpers
 # --------------------------------------------------------------------------- #
@@ -54,7 +53,11 @@ class SectionTitle(ctk.CTkLabel):
 
 
 class StatCard(Card):
-    """Headline number with a label above and an optional note below."""
+    """Headline number with a label above, an optional note below, and a trend.
+
+    The trend chip is the part that makes the number mean something: $840 today
+    only reads as good or bad next to what the same length of time made before.
+    """
 
     def __init__(self, parent, title: str, value: str = "—", note: str = "", accent=None):
         super().__init__(parent)
@@ -72,7 +75,13 @@ class StatCard(Card):
         self.value_label = ctk.CTkLabel(
             self, text=value, font=theme.font(26, "bold"), text_color=accent, anchor="w"
         )
-        self.value_label.grid(row=1, column=0, sticky="ew", padx=16, pady=(2, 0))
+        self.value_label.grid(row=1, column=0, sticky="w", padx=16, pady=(2, 0))
+
+        self.trend_label = ctk.CTkLabel(
+            self, text="", font=theme.font(11, "bold"),
+            text_color=theme.TEXT_MUTED, anchor="w",
+        )
+        self.trend_label.grid(row=1, column=1, sticky="w", padx=(0, 16), pady=(10, 0))
 
         self.note_label = ctk.CTkLabel(
             self,
@@ -81,12 +90,23 @@ class StatCard(Card):
             text_color=theme.TEXT_MUTED,
             anchor="w",
         )
-        self.note_label.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 14))
+        self.note_label.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 14))
 
-    def set(self, value: str, note: str | None = None) -> None:
+    def set(self, value: str, note: str | None = None, trend=None) -> None:
+        """``trend`` is ``(text, direction)`` where direction is -1, 0 or 1."""
         self.value_label.configure(text=value)
         if note is not None:
             self.note_label.configure(text=note)
+        if trend is None:
+            self.trend_label.configure(text="")
+            return
+        text, direction = trend
+        colour = (
+            theme.SUCCESS if direction > 0
+            else theme.DANGER if direction < 0
+            else theme.TEXT_MUTED
+        )
+        self.trend_label.configure(text=text, text_color=colour)
 
 
 class DataTable(ctk.CTkFrame):
@@ -197,7 +217,8 @@ class DataTable(ctk.CTkFrame):
 def _row_value(row, key):
     """Read ``key`` from a sqlite3.Row, a dict, or a plain object."""
     if hasattr(row, "keys"):
-        return row[key] if key in row.keys() else ""
+        # sqlite3.Row has no __contains__, so .keys() is the correct test.
+        return row[key] if key in row.keys() else ""  # noqa: SIM118
     return getattr(row, key, "")
 
 

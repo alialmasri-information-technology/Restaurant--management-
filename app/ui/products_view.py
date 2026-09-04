@@ -10,11 +10,11 @@ import customtkinter as ctk
 from app import config, labels
 from app.money import fmt_usd, parse_amount, parse_int
 from app.services import catalog_io
-from app.ui.receipt_actions import open_file
 from app.services import products as products_service
 from app.services import settings as settings_service
 from app.services import suppliers as suppliers_service
 from app.ui import theme
+from app.ui.receipt_actions import open_file
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,

@@ -10,8 +10,14 @@ from pathlib import Path
 from app import auth, config, db
 from app.services import shifts as shifts_service
 
-
 REDIRECTED_DIRS = ("RECEIPTS_DIR", "BACKUPS_DIR", "IMAGES_DIR", "LOGS_DIR")
+
+#: PBKDF2 rounds while testing. The production figure is deliberately expensive,
+#: which is the right trade for one sign-in a day and the wrong one for a suite
+#: that hashes hundreds of times — it costs minutes and proves nothing that a
+#: cheap work factor does not. Anything above the 1,000 rounds the hash-upgrade
+#: tests treat as "legacy" works.
+TEST_ITERATIONS = 10_000
 
 
 class DatabaseTestCase(unittest.TestCase):
@@ -24,6 +30,8 @@ class DatabaseTestCase(unittest.TestCase):
     opens_shift = True
 
     def setUp(self) -> None:
+        self._original_iterations = auth.ITERATIONS
+        auth.ITERATIONS = TEST_ITERATIONS
         self._tmp = Path(tempfile.mkdtemp(prefix="re4-test-"))
         # Every writable directory is redirected, so a test that takes a backup
         # or saves an image cannot leave anything in the real project folder.
@@ -40,6 +48,7 @@ class DatabaseTestCase(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        auth.ITERATIONS = self._original_iterations
         db.close_connection()
         db.set_database_path(None)
         for name, original in self._original_dirs.items():

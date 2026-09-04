@@ -77,6 +77,17 @@ class BarChart(ctk.CTkFrame):
             )
 
 
+def _trend(current, previous, _label: str = ""):
+    """Render a percentage move as ``("▲ 12%", 1)``, or nothing without a baseline."""
+    ratio = reports_service.change_ratio(current, previous)
+    if ratio is None:
+        return None
+    if abs(ratio) < 0.005:
+        return ("• level", 0)
+    arrow = "▲" if ratio > 0 else "▼"
+    return (f"{arrow} {abs(ratio) * 100:,.0f}%", 1 if ratio > 0 else -1)
+
+
 class DashboardView(ctk.CTkScrollableFrame):
     def __init__(self, parent, shell):
         super().__init__(parent, fg_color="transparent")
@@ -175,25 +186,36 @@ class DashboardView(ctk.CTkScrollableFrame):
 
     def refresh(self) -> None:
         today = reports_service.today()
+        month_start = reports_service.month_start()
         rate = settings_service.exchange_rate()
         rounding = settings_service.lbp_rounding()
 
         day = reports_service.summary(today, today)
-        month = reports_service.summary(reports_service.month_start(), today)
+        month = reports_service.summary(month_start, today)
         stock = reports_service.inventory_snapshot()
+
+        # Same-length windows ending the day before, so a comparison made on the
+        # 3rd of the month is not measured against a full month.
+        yesterday = reports_service.summary(*reports_service.previous_period(today, today))
+        last_month = reports_service.summary(
+            *reports_service.previous_period(month_start, today)
+        )
 
         self.card_today.set(
             fmt_usd(day["revenue"]),
             f"{day['sale_count']} sales · {fmt_lbp(to_lbp(day['revenue'], rate, rounding))}",
+            trend=_trend(day["revenue"], yesterday["revenue"], "yesterday"),
         )
         self.card_month.set(
             fmt_usd(month["revenue"]),
             f"{month['sale_count']} sales · avg {fmt_usd(month['average_sale'])}",
+            trend=_trend(month["revenue"], last_month["revenue"], "the period before"),
         )
         self.card_profit.set(
             fmt_usd(month["gross_profit"]),
             f"{month['units']} units sold"
             + (f" · {month['refund_count']} refunded" if month["refund_count"] else ""),
+            trend=_trend(month["gross_profit"], last_month["gross_profit"], ""),
         )
         self.card_stock.set(
             fmt_usd(stock.get("stock_cost", 0)),

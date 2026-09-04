@@ -143,7 +143,7 @@ def _validate(name: str, sku: str, price, cost, reorder_level) -> None:
         raise ProductError("SKU is required.")
     try:
         price, cost = D(price), D(cost)
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user as a message
+    except Exception as exc:  # any parse failure is surfaced as a message
         raise ProductError("Price and cost must be numbers.") from exc
     if price < 0 or cost < 0:
         raise ProductError("Price and cost cannot be negative.")

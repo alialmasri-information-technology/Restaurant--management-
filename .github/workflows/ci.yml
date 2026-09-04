@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check app tests main.py
+      - name: Check formatting is at least self-consistent
+        run: ruff format --diff app tests main.py
+        continue-on-error: true
+
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # The service layer needs no Tk, but importing app.ui does. Installing it
+      # keeps the UI smoke tests from being skipped on Linux.
+      - name: Install Tk (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The UI smoke tests skip themselves when there is no display; xvfb gives
+      # them one so they actually run.
+      - name: Run tests (Linux, with a virtual display)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest discover -s tests -t . --verbose
+
+      - name: Run tests
+        if: runner.os != 'Linux'
+        run: python -m unittest discover -s tests -t . --verbose
+
+  build:
+    name: Windows executable
+    runs-on: windows-latest
+    needs: [lint, test]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - run: pyinstaller RE4.spec --noconfirm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RE4-windows
+          path: dist/RE4.exe
+          if-no-files-found: error

@@ -17,6 +17,9 @@ NAV_ITEMS = (
     ("till", "Till", False),
     ("invoices", "Invoices", False),
     ("products", "Products", False),
+    # Staff count the shelves; only an admin may post the variance, which the
+    # screen enforces itself rather than hiding the whole page from them.
+    ("stocktake", "Stock take", False),
     ("purchasing", "Purchasing", True),
     ("customers", "Customers", False),
     ("reports", "Reports", True),
@@ -93,11 +96,29 @@ class AppShell(ctk.CTkFrame):
             footer, text=self.user.role, font=theme.font(11),
             text_color=theme.SIDEBAR_TEXT, anchor="w",
         ).grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+        actions = ctk.CTkFrame(footer, fg_color="transparent")
+        actions.grid(row=2, column=0, sticky="ew")
+        actions.grid_columnconfigure((0, 1), weight=1, uniform="footer")
         ctk.CTkButton(
-            footer, text="Sign out", height=34, font=theme.font(12),
+            actions, text="Lock", height=34, font=theme.font(12),
+            fg_color=theme.SIDEBAR_HOVER, hover_color=theme.NEUTRAL,
+            command=self.lock,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(
+            actions, text="Sign out", height=34, font=theme.font(12),
             fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
             command=self._logout,
-        ).grid(row=2, column=0, sticky="ew")
+        ).grid(row=0, column=1, sticky="ew")
+
+        # Ctrl+L belongs to the till's search box, so the lock takes the shifted
+        # chord — near enough to be muscle memory, far enough not to collide.
+        self.winfo_toplevel().bind("<Control-Shift-L>", lambda _event: self.lock())
+
+    def lock(self) -> None:
+        """Cover the screen, keeping whatever is half-finished underneath."""
+        root = self.winfo_toplevel()
+        if hasattr(root, "lock_screen"):
+            root.lock_screen("Locked by the operator.")
 
     def _logout(self) -> None:
         if ask_confirm(self, "Sign out of RE4?", "Sign out"):
@@ -116,6 +137,7 @@ class AppShell(ctk.CTkFrame):
             purchasing_view,
             reports_view,
             settings_view,
+            stocktake_view,
             till_view,
             users_view,
         )
@@ -126,6 +148,7 @@ class AppShell(ctk.CTkFrame):
             "till": till_view.TillView,
             "invoices": invoices_view.InvoicesView,
             "products": products_view.ProductsView,
+            "stocktake": stocktake_view.StockTakeView,
             "purchasing": purchasing_view.PurchasingView,
             "customers": customers_view.CustomersView,
             "reports": reports_view.ReportsView,

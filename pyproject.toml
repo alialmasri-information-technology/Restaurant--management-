@@ -1,0 +1,103 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "re4"
+version = "2.1.0"
+description = "Offline point-of-sale and stock control for small shops, priced in USD and settled in USD and LBP."
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["point-of-sale", "pos", "retail", "inventory", "sqlite", "tkinter"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: X11 Applications",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Point-Of-Sale",
+]
+dependencies = [
+    "customtkinter>=5.2.2",
+    "reportlab>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+]
+build = [
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+re4 = "main:main"
+
+[project.urls]
+Documentation = "https://github.com/your-org/re4#readme"
+Source = "https://github.com/your-org/re4"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# --------------------------------------------------------------------------- #
+# Linting
+# --------------------------------------------------------------------------- #
+
+[tool.ruff]
+line-length = 95
+target-version = "py310"
+extend-exclude = ["venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "W",    # warnings
+    "I",    # import order
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "BLE",  # blind except
+    "RUF",  # ruff-specific
+]
+ignore = [
+    # Long, explicit SQL strings read better than they lint.
+    "E501",
+    # Receipts, audit details and error messages are written for a shopkeeper,
+    # not a terminal: → and × belong in them.
+    "RUF001",
+    "RUF003",
+    # `[default] + found` is clearer here than unpacking into a literal.
+    "RUF005",
+    # Tk teardown reads better as try/except/pass with the reason in a comment
+    # than as a contextlib.suppress import at the top of a UI module.
+    "SIM105",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers to drive a screen the way a user would.
+"tests/*" = ["SLF001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
+
+# --------------------------------------------------------------------------- #
+# Tests
+# --------------------------------------------------------------------------- #
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# The suite is written against unittest and runs equally well under either
+# runner; pytest is a convenience, never a requirement.
+addopts = "-q"

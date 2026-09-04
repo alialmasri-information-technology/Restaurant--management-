@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
-from app import auth, config
+from app import auth, config, db
 from app.ui import theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
@@ -45,7 +45,9 @@ class UsersView(ctk.CTkFrame):
                 ("username", "Username", 180, "w"),
                 ("full_name", "Full name", 240, "w"),
                 ("role", "Role", 140, "w"),
-                ("is_active", "Active", 100, "center"),
+                ("is_active", "Active", 90, "center"),
+                ("last_login", "Last signed in", 160, "w"),
+                ("state", "State", 150, "center"),
             ],
             id_key="user_id",
             height=14,
@@ -60,6 +62,7 @@ class UsersView(ctk.CTkFrame):
         for column, (label, command, colour) in enumerate((
             ("Edit", self._edit, theme.NEUTRAL),
             ("Reset password", self._reset_password, theme.PRIMARY),
+            ("Unlock", self._unlock, theme.NEUTRAL),
             ("Activate / deactivate", self._toggle_active, theme.DANGER),
         )):
             ctk.CTkButton(
@@ -140,15 +143,42 @@ class UsersView(ctk.CTkFrame):
         user = self._selected()
         if user is None:
             return
+        own = user.user_id == self.shell.user.user_id
         dialog = FormModal(
             self, f"Reset password — {user.username}",
-            [{"key": "password", "label": "New password", "type": "password",
-              "hint": f"At least {auth.MIN_PASSWORD_LENGTH} characters."}],
-            lambda values: auth.set_password(user.user_id, values["password"]),
+            [
+                {"key": "password", "label": "New password", "type": "password",
+                 "hint": f"At least {auth.MIN_PASSWORD_LENGTH} characters."},
+                {"key": "must_change", "type": "check", "value": not own,
+                 "label": "Make them choose their own at the next sign-in",
+                 "hint": "You will have to tell them this password, so somebody "
+                         "other than the account holder knows it."},
+            ],
+            lambda values: auth.set_password(
+                user.user_id, values["password"],
+                must_change=bool(values["must_change"]),
+            ),
             submit_text="Set password",
         )
         if dialog.wait_result():
-            show_info(self, f"Password updated for {user.username}.", "Password reset")
+            self.refresh()
+            show_info(
+                self,
+                f"Password updated for {user.username}. Any lockout on the account "
+                "has been cleared.",
+                "Password reset",
+            )
+
+    def _unlock(self) -> None:
+        user = self._selected()
+        if user is None:
+            return
+        if not auth.lockout_remaining(user.username):
+            show_info(self, f"{user.username} is not locked out.", "Nothing to unlock")
+            return
+        auth.clear_lockout(user.username)
+        self.refresh()
+        show_info(self, f"{user.username} can sign in again.", "Account unlocked")
 
     def _toggle_active(self) -> None:
         user = self._selected()
@@ -169,16 +199,40 @@ class UsersView(ctk.CTkFrame):
         self.refresh()
 
     def refresh(self) -> None:
-        rows = [
-            {
+        locked = {row["username"].lower() for row in auth.locked_accounts()}
+        last_seen = {
+            row["user_id"]: row["last_login_at"]
+            for row in db.query("SELECT user_id, last_login_at FROM users")
+        }
+
+        rows = []
+        for user in auth.list_users():
+            if not user.is_active:
+                state = "Deactivated"
+            elif user.username.lower() in locked:
+                state = "Locked out"
+            elif user.must_change_password:
+                state = "Must set password"
+            else:
+                state = "—"
+            rows.append({
                 "user_id": user.user_id,
                 "username": user.username,
                 "full_name": user.full_name or "—",
                 "role": user.role,
                 "is_active": user.is_active,
-            }
-            for user in auth.list_users()
-        ]
-        self.table.set_rows(
-            rows, tag_func=lambda row: () if row["is_active"] else "muted"
-        )
+                "last_login": last_seen.get(user.user_id) or "Never",
+                "state": state,
+            })
+
+        self.table.set_rows(rows, tag_func=_user_tag)
+
+
+def _user_tag(row) -> str:
+    if not row["is_active"]:
+        return "muted"
+    if row["state"] == "Locked out":
+        return "danger"
+    if row["state"] == "Must set password":
+        return "warning"
+    return ""

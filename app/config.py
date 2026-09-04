@@ -15,7 +15,7 @@ from pathlib import Path
 
 APP_NAME = "RE4"
 APP_TITLE = "RE4 — Business & Retail Management"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 IS_FROZEN = getattr(sys, "frozen", False)
 
@@ -73,6 +73,11 @@ PO_STATUSES = (PO_DRAFT, PO_ORDERED, PO_PARTIAL, PO_RECEIVED, PO_CANCELLED)
 
 RETURN_REASONS = ("Faulty", "Wrong item", "Customer changed mind", "Damaged", "Other")
 
+TAKE_OPEN = "Open"
+TAKE_APPLIED = "Applied"
+TAKE_CANCELLED = "Cancelled"
+TAKE_STATUSES = (TAKE_OPEN, TAKE_APPLIED, TAKE_CANCELLED)
+
 STOCK_REASONS = (
     "Initial",
     "Restock",
@@ -82,6 +87,7 @@ STOCK_REASONS = (
     "Adjustment",
     "Spoilage",
     "Import",
+    "Stock take",
 )
 
 RECEIPT_WIDTHS = ("58", "80")
@@ -103,6 +109,9 @@ DEFAULT_SETTINGS = {
     "backup_keep": "20",
     "require_shift": "1",  # a till shift must be open before selling
     "allow_price_override": "1",  # employees may change a price with admin approval
+    "login_max_attempts": "5",  # consecutive failures before the account locks; 0 = off
+    "login_lockout_minutes": "5",  # how long a locked account stays locked
+    "idle_lock_minutes": "15",  # lock the screen after this much inactivity; 0 = off
 }
 
 

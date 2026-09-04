@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 
 from app import config, db
-from app.money import D, ZERO, to_float, usd
+from app.money import ZERO, D, to_float, usd
 from app.services import audit
 from app.services import settings as settings_service
 

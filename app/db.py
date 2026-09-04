@@ -7,9 +7,24 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from app import config
+from app import config, logs
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+
+#: How long a writer waits for a competing lock before giving up. Two tills on
+#: one database, or a backup running while a sale commits, otherwise surface as
+#: "database is locked" the instant they overlap.
+BUSY_TIMEOUT_MS = 5_000
+
+CONNECTION_PRAGMAS = (
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA journal_mode = WAL",
+    f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}",
+    # WAL already fsyncs at checkpoints; NORMAL trades a crash-window of the
+    # last transaction for an order-of-magnitude faster checkout.
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA temp_store = MEMORY",
+)
 
 _local = threading.local()
 _db_path: Path | None = None
@@ -213,6 +228,46 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+-- One row per username that has recently failed to sign in. Cleared on a
+-- successful sign-in, so a shop that never gets its password wrong stays empty.
+CREATE TABLE IF NOT EXISTS login_throttle (
+    username     TEXT PRIMARY KEY COLLATE NOCASE,
+    fail_count   INTEGER NOT NULL DEFAULT 0,
+    first_fail_at TEXT   NOT NULL DEFAULT (datetime('now', 'localtime')),
+    last_fail_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    locked_until TEXT
+);
+
+-- A physical inventory count. Expected quantities are frozen when the count
+-- opens, so trading during the count does not move the goalposts; the variance
+-- is only posted to stock when the count is applied.
+CREATE TABLE IF NOT EXISTS stock_takes (
+    stock_take_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reference     TEXT    NOT NULL UNIQUE,
+    opened_by     INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    opened_at     TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    closed_by     INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    closed_at     TEXT,
+    status        TEXT    NOT NULL DEFAULT 'Open'
+                          CHECK (status IN ('Open', 'Applied', 'Cancelled')),
+    scope         TEXT    NOT NULL DEFAULT 'All products',
+    category_id   INTEGER REFERENCES categories (category_id) ON DELETE SET NULL,
+    note          TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS stock_take_items (
+    stock_take_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_take_id INTEGER NOT NULL REFERENCES stock_takes (stock_take_id) ON DELETE CASCADE,
+    product_id    INTEGER NOT NULL REFERENCES products (product_id) ON DELETE CASCADE,
+    sku_at_count  TEXT    NOT NULL DEFAULT '',
+    name_at_count TEXT    NOT NULL DEFAULT '',
+    expected_qty  INTEGER NOT NULL DEFAULT 0,
+    counted_qty   INTEGER,
+    cost_usd      REAL    NOT NULL DEFAULT 0,
+    counted_at    TEXT,
+    UNIQUE (stock_take_id, product_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_name     ON products (name);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products (category_id);
 CREATE INDEX IF NOT EXISTS idx_sales_time        ON sales (sale_time);
@@ -224,6 +279,7 @@ CREATE INDEX IF NOT EXISTS idx_return_items_ret  ON return_items (return_id);
 CREATE INDEX IF NOT EXISTS idx_cash_shift        ON cash_movements (shift_id);
 CREATE INDEX IF NOT EXISTS idx_po_items_po       ON purchase_order_items (po_id);
 CREATE INDEX IF NOT EXISTS idx_audit_at          ON audit_log (at);
+CREATE INDEX IF NOT EXISTS idx_take_items_take  ON stock_take_items (stock_take_id);
 """
 
 # Columns added after v1. Applied idempotently so an existing shop database is
@@ -235,6 +291,9 @@ ADDED_COLUMNS = (
     ("sales", "shift_id", "INTEGER REFERENCES shifts (shift_id)"),
     ("sale_items", "discount_usd", "REAL NOT NULL DEFAULT 0"),
     ("sale_items", "returned_qty", "INTEGER NOT NULL DEFAULT 0"),
+    # v3
+    ("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "last_login_at", "TEXT"),
 )
 
 LATE_INDEXES = (
@@ -263,10 +322,13 @@ def get_connection() -> sqlite3.Connection:
     close_connection()
     path = database_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    for pragma in CONNECTION_PRAGMAS:
+        try:
+            conn.execute(pragma)
+        except sqlite3.DatabaseError:  # pragma: no cover - exotic SQLite builds
+            logs.warning("SQLite rejected %s", pragma)
     _local.conn = conn
     _local.path = path
     return conn
@@ -397,6 +459,9 @@ def _seed_admin() -> None:
         password="admin123",
         role=config.ROLE_ADMIN,
         full_name="Administrator",
+        # The bootstrap password is printed in the README and shown on the login
+        # screen, so it is public knowledge. Force a real one at first sign-in.
+        must_change_password=True,
     )
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import customtkinter as ctk
 
 from app import config
-from app.money import D, ZERO, fmt_lbp, fmt_usd, parse_amount, to_lbp, usd
+from app.money import ZERO, D, fmt_lbp, fmt_usd, parse_amount, to_lbp, usd
 from app.services import customers as customers_service
 from app.services import products as products_service
 from app.services import sales as sales_service

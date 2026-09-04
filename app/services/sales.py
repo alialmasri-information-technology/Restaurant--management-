@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from app import config, db
-from app.money import D, ZERO, compute_totals, line_total as compute_line_total, to_float, usd
+from app.money import ZERO, D, compute_totals, to_float, usd
+from app.money import line_total as compute_line_total
 from app.services import audit
 from app.services import products as products_service
 from app.services import returns as returns_service
@@ -61,7 +62,9 @@ class Cart:
     # -- line management ---------------------------------------------------- #
 
     def find(self, product_id: int) -> CartLine | None:
-        return next((l for l in self.lines if l.product_id == product_id), None)
+        return next(
+            (line for line in self.lines if line.product_id == product_id), None
+        )
 
     def add_product(self, product: sqlite3.Row, qty: int = 1) -> CartLine:
         if qty <= 0:
@@ -127,7 +130,9 @@ class Cart:
         line.discount = amount
 
     def remove(self, product_id: int) -> None:
-        self.lines = [l for l in self.lines if l.product_id != product_id]
+        self.lines = [
+            line for line in self.lines if line.product_id != product_id
+        ]
 
     def clear(self) -> None:
         self.lines.clear()
@@ -177,7 +182,7 @@ class Cart:
         })
 
     @classmethod
-    def from_payload(cls, payload: str) -> "Cart":
+    def from_payload(cls, payload: str) -> Cart:
         """Rebuild a parked cart, re-reading each product for today's stock."""
         data = json.loads(payload)
         cart = cls()
@@ -445,7 +450,11 @@ def display_status(sale) -> str:
     """'Completed', 'Refunded', or 'Part returned' derived from the line counts."""
     if sale["status"] == config.SALE_REFUNDED:
         return config.SALE_REFUNDED
-    returned = sale["returned_count"] if "returned_count" in sale.keys() else 0
+    # .keys() rather than `in sale`: a sqlite3.Row has no __contains__, and
+    # this row may come from a query that did not select the column.
+    returned = (
+        sale["returned_count"] if "returned_count" in sale.keys() else 0  # noqa: SIM118
+    )
     return "Part returned" if returned else config.SALE_COMPLETED
 
 

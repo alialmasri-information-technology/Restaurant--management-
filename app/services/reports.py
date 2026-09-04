@@ -35,6 +35,36 @@ def month_start() -> str:
     return dt.date.today().replace(day=1).isoformat()
 
 
+def previous_period(date_from: str, date_to: str) -> tuple[str, str]:
+    """The equally long window immediately before ``date_from``.
+
+    Used for the "vs" figures. Comparing this month against the whole of last
+    month would flatter the first of the month and punish the last, so the
+    comparison window is the same number of days, ending the day before.
+    """
+    start = dt.date.fromisoformat(date_from)
+    end = dt.date.fromisoformat(date_to)
+    span = (end - start).days
+    previous_end = start - dt.timedelta(days=1)
+    return (previous_end - dt.timedelta(days=span)).isoformat(), previous_end.isoformat()
+
+
+def change_ratio(current, previous) -> float | None:
+    """Fractional change from ``previous`` to ``current``.
+
+    ``None`` when there is no baseline to compare against — "up 100%" from zero
+    is arithmetic, not information.
+    """
+    try:
+        current = float(current or 0)
+        previous = float(previous or 0)
+    except (TypeError, ValueError):
+        return None
+    if previous == 0:
+        return None
+    return (current - previous) / abs(previous)
+
+
 def _range(date_from: str | None, date_to: str | None, column: str = "s.sale_time"):
     clauses, params = [], []
     if date_from:

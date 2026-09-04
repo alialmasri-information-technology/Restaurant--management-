@@ -39,7 +39,7 @@ echo re4.db and a receipts folder beside itself, so put it in a
 echo folder you can write to (not Program Files).
 echo.
 echo First sign-in:  admin / admin123
-echo Change that password under Settings straight away.
+echo RE4 will ask you to choose a real password straight away.
 echo.
 pause
 exit /b 0

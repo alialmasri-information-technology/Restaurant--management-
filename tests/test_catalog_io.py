@@ -143,7 +143,9 @@ class ApplyTests(CatalogTestCase):
         plan = service.analyse(path)
         # Corrupt the second row so the write fails after the first has been made.
         plan.rows[1].values["price_usd"] = object()
-        with self.assertRaises(Exception):
+        # The importer rejects the unparseable price; what matters is that the
+        # first row, its category and its supplier all roll back with it.
+        with self.assertRaises(products_service.ProductError):
             service.apply(plan, self.admin.user_id)
         self.assertIsNone(products_service.get_by_sku("S1"))
         self.assertIsNone(suppliers_service.find_by_name("Acme"))

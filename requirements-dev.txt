@@ -1,0 +1,5 @@
+# Everything needed to work on RE4, on top of requirements.txt.
+-r requirements.txt
+
+ruff>=0.6          # linting and import ordering; configured in pyproject.toml
+pyinstaller>=6.0   # builds dist/RE4.exe from RE4.spec

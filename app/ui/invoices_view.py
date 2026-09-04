@@ -6,9 +6,9 @@ import customtkinter as ctk
 
 from app import config
 from app.money import D, fmt_lbp, fmt_usd, parse_int, to_lbp
+from app.services import reports as reports_service
 from app.services import returns as returns_service
 from app.services import sales as sales_service
-from app.services import reports as reports_service
 from app.services import settings as settings_service
 from app.ui import theme
 from app.ui.receipt_actions import print_receipt, print_return_slip, save_receipt_as

@@ -8,8 +8,9 @@ has to be restyled by hand, which :func:`style_treeview` does.
 
 from __future__ import annotations
 
-import customtkinter as ctk
 from tkinter import ttk
+
+import customtkinter as ctk
 
 # (light, dark)
 BG = ("#f2f4f7", "#15181d")
@@ -69,7 +70,7 @@ def style_treeview(widget) -> None:
     style = ttk.Style(widget)
     try:
         style.theme_use("clam")
-    except Exception:  # pragma: no cover - only on exotic Tk builds
+    except Exception:  # noqa: BLE001  # pragma: no cover - exotic Tk builds
         pass
 
     surface = pick(SURFACE)

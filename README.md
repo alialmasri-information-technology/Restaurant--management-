@@ -19,15 +19,17 @@ audit trail of who did what.
 | **Till** | Open a shift with a counted float, record cash in and out, take an X report mid-shift, close with a count that reports the variance and prints a Z report |
 | **Invoices** | Search past sales; view line-by-line detail; reprint or save the PDF; return part of an invoice or refund all of it |
 | **Products** | Catalogue with cost, price, barcode, supplier, stock and reorder level; product photos; barcode label sheets; CSV import and export; stock adjustments with a full movement history |
+| **Stock take** | Count the shelves against the system: scan or type, see the variance in units and at cost as you go, and post it when it is signed off |
 | **Purchasing** | Suppliers, purchase orders, receiving stock against an order at weighted-average cost, and a reorder list that can raise the orders for you |
 | **Customers** | Contact details, lifetime spend, purchase history |
 | **Reports** | Revenue net of returns, margin, best sellers, top customers, payment mix, sales per user, stock valuation, dead stock, CSV export |
 | **Users** | Admin and Employee accounts, password resets, activation |
-| **Settings** | Store details, exchange rate, tax, printer and receipt width, backups and restore, the audit log, light/dark theme |
+| **Settings** | Store details, exchange rate, tax, printer and receipt width, screen lock and sign-in throttling, backups and restore, the audit log, light/dark theme |
 
 **Roles.** *Admin* sees everything. *Employee* can make sales, run the till, view
-invoices, manage customers and adjust stock — but not edit the catalogue, raise
-purchase orders, view reports, or touch users and settings.
+invoices, manage customers, adjust stock and count a stock take — but not edit
+the catalogue, post a stock take, raise purchase orders, view reports, or touch
+users and settings.
 
 ### Keyboard at the till
 
@@ -38,6 +40,7 @@ purchase orders, view reports, or touch users and settings.
 | `F4` | Complete the sale |
 | `F6` / `F7` / `F8` | Quantity / line discount / price override |
 | `Ctrl+L` | Back to the search box |
+| `Ctrl+Shift+L` | Lock the screen (anywhere in the app) |
 
 ---
 
@@ -78,8 +81,9 @@ Password: admin123
 ```
 
 The bootstrap account is created only when the database has no users at all.
-**Change the password immediately** under *Settings → Change my password*, then
-add real accounts under *Users*.
+Because that password is printed here and shown on the login screen, RE4 insists
+on a real one: signing in with it opens a dialog that will not let you past until
+you choose your own. Then add real accounts under *Users*.
 
 To explore with a sample catalogue on a fresh database:
 
@@ -87,12 +91,22 @@ To explore with a sample catalogue on a fresh database:
 python main.py --demo
 ```
 
-Other options:
+Other options. Each of these does one thing and exits without opening the
+application — they exist for the moment something has gone wrong and nobody can
+get into the interface to fix it:
 
 ```bash
-python main.py --reset-admin "new-password"   # locked out? reset and exit
+python main.py --version                      # print the version
+python main.py --check                        # verify the database, summarise it
+python main.py --backup                       # write a backup
+python main.py --reset-admin "new-password"   # lost the admin password
+python main.py --unlock cashier               # clear a sign-in lockout ("all" for every one)
 python main.py --data-dir "D:\shop"           # keep the data somewhere specific
 ```
+
+`--check` is the one to run after a power cut or a crash: it reports the
+integrity of the file, the schema version, how much is in it, and which accounts
+are locked out. It exits non-zero if SQLite finds damage.
 
 ---
 
@@ -168,6 +182,53 @@ that one changed.
 
 ---
 
+## Keeping the till safe
+
+A point of sale stands on a counter all day, often with nobody in front of it.
+Three things guard it, all under *Settings → Security*:
+
+**The screen locks.** After the configured idle time — 15 minutes out of the box,
+or on demand from the sidebar or `Ctrl+Shift+L` — the screen is covered and only
+the operator's password brings it back. The shell underneath is left intact, so a
+half-built cart, the open shift and the page you were on are all still there.
+Signing out instead is one button away.
+
+**Wrong passwords are throttled.** Five consecutive failures lock an account for
+five minutes; both numbers are yours to set, and 0 switches it off. Unknown
+usernames are throttled the same way, so the lockout never reveals which accounts
+exist. An administrator can clear a lockout from *Users*, from *Settings*, or —
+when nobody can get in at all — with `python main.py --unlock all`.
+
+**A password somebody else set has to be replaced.** The bootstrap
+`admin`/`admin123` account, and any password an administrator resets, must be
+changed at the next sign-in before the app will do anything else.
+
+Separately, whenever a correct password is entered against a hash made at an
+older work factor, it is quietly re-hashed at the current one — so an account
+made years ago does not keep years-old protection.
+
+## Counting the stock
+
+Recorded stock drifts. Theft, breakage, miskeyed receiving and mis-scanned sales
+all leave the system holding more than the shelf does, and counting is the only
+way to find out. *Stock take* runs one properly:
+
+1. **Open a count.** Everything in scope — the whole catalogue, or one category —
+   is frozen onto a worksheet at the quantity the system currently believes. The
+   till keeps trading; the worksheet does not move.
+2. **Count.** Scan with a barcode reader and each scan adds one, or select a line
+   and type the figure. The sheet filters to what is still uncounted, or to the
+   lines that disagree, and the shortage, the surplus and what the variance is
+   worth at cost are on screen the whole time.
+3. **Apply.** The *difference* is posted to stock, not the counted number — so
+   the five units sold during the count are not silently put back. Every
+   adjustment lands in that product's stock history tagged with the count's
+   reference, and lines nobody counted are left exactly as they are.
+
+A count can be abandoned at any point with no effect on stock, and past counts
+are kept, so a pattern of shrinkage in one aisle becomes visible over time. Staff
+can count; only an administrator can post the variance.
+
 ## Money handling
 
 Prices are stored in USD. Every amount is computed with `decimal.Decimal` and
@@ -200,18 +261,21 @@ app/
   services/              business logic, free of any UI imports
     products.py    customers.py   sales.py       reports.py    settings.py
     shifts.py      returns.py     purchases.py   suppliers.py
-    catalog_io.py  backups.py     audit.py
+    catalog_io.py  backups.py     audit.py       stocktake.py
   ui/
     app.py               root window, login/shell swap
     shell.py             sidebar navigation and page header
     theme.py             colour tokens, fonts, ttk styling
     widgets.py           cards, tables, modals, forms
+    security.py          lock screen, forced password change
     login.py             dashboard_view.py  pos_view.py     till_view.py
     products_view.py     purchasing_view.py customers_view.py
     invoices_view.py     reports_view.py    users_view.py
-    settings_view.py     receipt_actions.py
-tests/                   246 unit tests over the service layer
+    settings_view.py     stocktake_view.py  receipt_actions.py
+tests/                   310 tests over the service layer and every screen
+pyproject.toml           metadata, the `re4` entry point, Ruff configuration
 RE4.spec                 PyInstaller build definition
+.github/workflows/ci.yml lint, test on three platforms, build the executable
 ```
 
 The `services/` package imports no Tkinter, which is what makes the business
@@ -225,12 +289,31 @@ rules directly testable.
 python -m unittest discover -s tests -t .
 ```
 
-246 tests cover money arithmetic, password hashing and the admin guards, stock
+310 tests, about 25 seconds. They cover money arithmetic, password hashing and
+the admin guards, sign-in throttling and forced password changes, stock
 movements, the checkout pipeline (including rollback when stock runs out
 mid-sale), invoice numbering, partial returns and their pricing, till shifts and
-reconciliation, purchase orders and weighted-average costing, CSV import
-(including that a failure part-way through rolls the whole file back), backup
-and restore, reporting aggregates, barcode label geometry and PDF generation.
+reconciliation, stock takes (including that selling during a count survives it),
+purchase orders and weighted-average costing, CSV import (including that a
+failure part-way through rolls the whole file back), backup and restore,
+reporting aggregates, barcode label geometry and PDF generation, and the
+v2 → v3 upgrade against a database shaped the way the last release left it.
+
+The last group builds every screen against a real, hidden Tk root and refreshes
+it. Nothing there asserts what a screen looks like — only that it can be built
+and navigated to without throwing, which is the one failure a released build
+shows as a blank window. Those tests skip themselves where there is no display,
+so they cost nothing on a headless machine.
+
+### Working on it
+
+```bash
+pip install -r requirements-dev.txt
+ruff check app tests main.py     # lint and import order; configured in pyproject.toml
+```
+
+CI runs the linter, then the suite on Linux, Windows and macOS across Python
+3.10 to 3.13, then builds the Windows executable.
 
 ---
 
@@ -238,10 +321,12 @@ and restore, reporting aggregates, barcode label geometry and PDF generation.
 
 `users`, `categories`, `suppliers`, `products`, `customers`, `shifts`,
 `cash_movements`, `sales`, `sale_items`, `returns`, `return_items`,
-`parked_sales`, `purchase_orders`, `purchase_order_items`, `inventory_log`,
-`audit_log`, `settings` — created automatically on first run and versioned
-through `PRAGMA user_version`, so an upgrade migrates an existing shop database
-rather than replacing it.
+`parked_sales`, `purchase_orders`, `purchase_order_items`, `stock_takes`,
+`stock_take_items`, `inventory_log`, `audit_log`, `login_throttle`, `settings` —
+created automatically on first run and versioned through `PRAGMA user_version`,
+so an upgrade migrates an existing shop database rather than replacing it. The
+current schema is **v3**; a 2.0 database is migrated in place on first start and
+nothing needs reimporting.
 
 Three deliberate choices worth knowing:
 
@@ -256,3 +341,10 @@ Three deliberate choices worth knowing:
   discount is prorated across the returned units — so refunding one of four
   items on a discounted basket refunds the discounted price of that item, not
   the shelf price.
+
+- **A stock take posts the difference it found, not the number it counted.** The
+  count freezes what the system expected when it opened; applying it writes
+  `counted - expected` to stock. Anything sold while the counter was working
+  down the aisle therefore survives the adjustment instead of being put back.
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed between releases.

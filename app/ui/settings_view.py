@@ -51,6 +51,7 @@ class SettingsView(ctk.CTkScrollableFrame):
         self._build_store_card()
         self._build_currency_card()
         self._build_printing_card()
+        self._build_security_card()
         self._build_data_card()
         self._build_account_card()
 
@@ -187,9 +188,116 @@ class SettingsView(ctk.CTkScrollableFrame):
             command=self._find_printers,
         ).grid(row=0, column=1)
 
-    def _build_data_card(self) -> None:
+    def _build_security_card(self) -> None:
         card = Card(self)
         card.grid(row=4, column=0, sticky="ew", padx=24, pady=(16, 0))
+        card.grid_columnconfigure((0, 1, 2), weight=1)
+
+        SectionTitle(card, "Security").grid(
+            row=0, column=0, columnspan=3, sticky="ew", padx=16, pady=(14, 2)
+        )
+        ctk.CTkLabel(
+            card,
+            text=(
+                "A till stands on a counter all day. Locking the screen protects "
+                "an unattended one without throwing away a half-built sale, and "
+                "throttling stops a short password being guessed at leisure. "
+                "Set either to 0 to switch it off."
+            ),
+            font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w",
+            wraplength=820, justify="left",
+        ).grid(row=1, column=0, columnspan=3, sticky="ew", padx=16, pady=(0, 10))
+
+        self.idle_lock = LabeledEntry(card, "Lock the screen after (minutes idle)")
+        self.max_attempts = LabeledEntry(card, "Failed sign-ins before locking")
+        self.lockout_minutes = LabeledEntry(card, "Keep locked for (minutes)")
+        self.idle_lock.grid(row=2, column=0, sticky="ew", padx=16, pady=6)
+        self.max_attempts.grid(row=2, column=1, sticky="ew", padx=16, pady=6)
+        self.lockout_minutes.grid(row=2, column=2, sticky="ew", padx=16, pady=6)
+
+        self.locked_label = ctk.CTkLabel(
+            card, text="", font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w",
+        )
+        self.locked_label.grid(row=3, column=0, columnspan=3, sticky="ew", padx=16, pady=(8, 0))
+
+        buttons = ctk.CTkFrame(card, fg_color="transparent")
+        buttons.grid(row=4, column=0, columnspan=3, sticky="ew", padx=16, pady=(10, 16))
+        ctk.CTkButton(
+            buttons, text="Save security settings", height=38, width=200,
+            command=self._save_security,
+        ).grid(row=0, column=0, padx=(0, 8))
+        ctk.CTkButton(
+            buttons, text="Unlock all accounts", height=38, width=180,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._unlock_accounts,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ctk.CTkButton(
+            buttons, text="Lock the screen now", height=38, width=180,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._lock_now,
+        ).grid(row=0, column=2)
+
+    def _save_security(self) -> None:
+        try:
+            idle = int(parse_amount(self.idle_lock.get() or 0, "idle lock"))
+            attempts = int(parse_amount(self.max_attempts.get() or 0, "failed sign-ins"))
+            minutes = int(parse_amount(self.lockout_minutes.get() or 0, "lockout"))
+        except ValueError as exc:
+            show_error(self, exc, "Invalid value")
+            return
+        if attempts == 1:
+            show_error(
+                self,
+                "Locking after a single wrong password would lock somebody out "
+                "for one mistyped character. Use 3 or more, or 0 to switch "
+                "throttling off.",
+                "Too strict",
+            )
+            return
+        settings_service.set_many({
+            "idle_lock_minutes": str(idle),
+            "login_max_attempts": str(attempts),
+            "login_lockout_minutes": str(minutes),
+        })
+        show_info(self, "Security settings saved.", "Settings saved")
+        self._refresh_locked_label()
+
+    def _unlock_accounts(self) -> None:
+        locked = auth.locked_accounts()
+        if not locked:
+            show_info(self, "No accounts are locked.", "Nothing to unlock")
+            return
+        names = ", ".join(row["username"] for row in locked)
+        if not ask_confirm(self, f"Unlock {names}?", "Unlock accounts"):
+            return
+        for row in locked:
+            auth.clear_lockout(row["username"])
+        audit_service.record("Accounts unlocked", "user", "", names)
+        self._refresh_locked_label()
+        show_info(self, f"Unlocked: {names}", "Accounts unlocked")
+
+    def _lock_now(self) -> None:
+        root = self.winfo_toplevel()
+        if hasattr(root, "lock_screen"):
+            root.lock_screen("Locked from Settings.")
+
+    def _refresh_locked_label(self) -> None:
+        locked = auth.locked_accounts()
+        if not locked:
+            self.locked_label.configure(
+                text="No accounts are locked out.", text_color=theme.TEXT_MUTED
+            )
+            return
+        self.locked_label.configure(
+            text="Locked out: "
+                 + ", ".join(f"{row['username']} (until {row['locked_until']})"
+                             for row in locked),
+            text_color=theme.WARNING,
+        )
+
+    def _build_data_card(self) -> None:
+        card = Card(self)
+        card.grid(row=5, column=0, sticky="ew", padx=24, pady=(16, 0))
         card.grid_columnconfigure(0, weight=1)
 
         SectionTitle(card, "Data safety").grid(
@@ -246,7 +354,7 @@ class SettingsView(ctk.CTkScrollableFrame):
 
     def _build_account_card(self) -> None:
         card = Card(self)
-        card.grid(row=5, column=0, sticky="ew", padx=24, pady=(16, 24))
+        card.grid(row=6, column=0, sticky="ew", padx=24, pady=(16, 24))
         card.grid_columnconfigure(0, weight=1)
 
         SectionTitle(card, "Application").grid(
@@ -524,6 +632,10 @@ class SettingsView(ctk.CTkScrollableFrame):
         self.tax.set(values.get("tax_rate", ""))
         self.rounding.set(values.get("lbp_rounding", ""))
         self.low_stock.set(values.get("low_stock_default", ""))
+        self.idle_lock.set(values.get("idle_lock_minutes", "0"))
+        self.max_attempts.set(values.get("login_max_attempts", "0"))
+        self.lockout_minutes.set(values.get("login_lockout_minutes", "0"))
+        self._refresh_locked_label()
         self.appearance_var.set(ctk.get_appearance_mode())
 
         printer = values.get("printer_name", "")

@@ -70,7 +70,13 @@ class LoginView(ctk.CTkFrame):
 
         for widget in (self, self.username_entry, self.password_entry):
             widget.bind("<Return>", lambda _event: self.attempt_login())
-        self.after(150, self.username_entry.focus_set)
+        # Guarded: the frame can be swapped out before a deferred focus fires,
+        # and an unguarded one then raises from inside Tcl's event loop.
+        self.after(150, self._focus_username)
+
+    def _focus_username(self) -> None:
+        if self.winfo_exists():
+            self.username_entry.focus_set()
 
     def _first_run_hint(self) -> str:
         """Only reveal the bootstrap credentials while they are still in place."""
@@ -80,7 +86,10 @@ class LoginView(ctk.CTkFrame):
                 auth.authenticate("admin", "admin123")
             except auth.AuthError:
                 return ""
-            return "First run — sign in as admin / admin123, then change the password in Settings."
+            return (
+                "First run — sign in as admin / admin123. You will be asked to "
+                "choose a real password straight away."
+            )
         return ""
 
     def attempt_login(self) -> None:

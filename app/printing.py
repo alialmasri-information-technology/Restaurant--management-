@@ -93,7 +93,7 @@ def print_file(path, printer_name: str = "") -> str:
             return _print_unix(path, printer_name)
     except PrintError:
         raise
-    except Exception as exc:  # noqa: BLE001 - surfaced to the user
+    except Exception as exc:  # whatever the platform threw, the user sees it
         logs.exception("Printing failed for %s", path)
         raise PrintError(f"The printer could not be reached: {exc}") from exc
     raise PrintError("Printing is not supported on this platform.")
@@ -116,7 +116,8 @@ def _print_windows(path: Path, printer_name: str) -> str:
         )
 
     try:
-        os.startfile(str(path), "print")  # noqa: S606 - our own generated file
+        # The path is a PDF this application generated, never user input.
+        os.startfile(str(path), "print")
     except OSError as exc:
         raise PrintError(
             "Windows could not print the file. Check that a PDF reader is "

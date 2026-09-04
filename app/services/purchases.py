@@ -11,7 +11,7 @@ import datetime as dt
 import sqlite3
 
 from app import config, db
-from app.money import D, ZERO, to_float, usd
+from app.money import ZERO, D, to_float, usd
 from app.services import audit
 from app.services import products as products_service
 
@@ -99,7 +99,7 @@ def next_po_no(conn: sqlite3.Connection) -> str:
 # Writes
 # --------------------------------------------------------------------------- #
 
-def _normalise_lines(lines) -> list[tuple[int, int, "D"]]:
+def _normalise_lines(lines) -> list[tuple[int, int, D]]:
     """Validate and merge the (product_id, qty, unit_cost) triples."""
     merged: dict[int, list] = {}
     for line in lines:

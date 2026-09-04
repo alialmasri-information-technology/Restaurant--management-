@@ -20,7 +20,8 @@ def open_file(path: Path) -> None:
     path = Path(path)
     try:
         if sys.platform.startswith("win"):
-            os.startfile(str(path))  # noqa: S606 - opening our own generated file
+            # Our own generated PDF, never a path typed by anyone.
+            os.startfile(str(path))
         elif sys.platform == "darwin":
             subprocess.run(["open", str(path)], check=False)
         else:
