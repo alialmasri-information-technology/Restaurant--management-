@@ -118,7 +118,7 @@ class RE4App(ctk.CTk):
                 and not self.is_locked
                 and time.monotonic() - self._last_activity >= timeout
             ):
-                self.lock_screen()
+                self.lock_screen("Nobody was here for a while, so the screen locked.")
         except Exception:  # noqa: BLE001 - a bad setting must not stop the timer
             logs.exception("Idle lock check failed")
         finally:

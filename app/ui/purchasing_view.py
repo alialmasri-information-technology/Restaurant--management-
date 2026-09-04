@@ -9,7 +9,7 @@ from app.money import D, fmt_usd, parse_amount, parse_int
 from app.services import products as products_service
 from app.services import purchases as purchases_service
 from app.services import suppliers as suppliers_service
-from app.ui import theme
+from app.ui import phrasing, theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,
@@ -124,7 +124,9 @@ class PurchasingView(ctk.CTkFrame):
 
         self.orders = DataTable(tab, ORDER_COLUMNS, id_key="po_id", height=14)
         self.orders.set_formatter("total_cost_usd", lambda value, row: fmt_usd(value))
-        self.orders.set_formatter("expected_date", lambda value, row: value or "-")
+        self.orders.set_formatter(
+            "expected_date", lambda value, _row: phrasing.day_label(value, empty="No date")
+        )
         self.orders.set_formatter("supplier_name", lambda value, row: value or "-")
         self.orders.grid(row=1, column=0, sticky="nsew")
         self.orders.on_double_click(self.receive_order)
@@ -138,7 +140,7 @@ class PurchasingView(ctk.CTkFrame):
         ]
         self.orders.set_rows(
             rows, tag_func=self._order_tag,
-            empty_message="No purchase orders match this filter.",
+            empty_message="Nothing here. Raise an order when stock is running low.",
         )
 
     @staticmethod
@@ -361,7 +363,7 @@ class PurchasingView(ctk.CTkFrame):
         self.reorder.set_rows(
             purchases_service.suggested_reorder(),
             tag_func=lambda row: "danger" if row["stock_qty"] == 0 else "warning",
-            empty_message="Everything is above its reorder level.",
+            empty_message="Nothing needs reordering — every shelf is above its level.",
         )
 
     def order_suggestions(self) -> None:

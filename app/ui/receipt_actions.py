@@ -102,7 +102,7 @@ def save_receipt_as(parent, sale_id: int) -> Path | None:
         "Could not create the receipt",
     )
     if path:
-        show_info(parent, f"Receipt saved to:\n{path}", "Receipt saved")
+        show_info(parent, f"Saved to:\n{path}", "Receipt saved")
     return path
 
 
@@ -112,7 +112,7 @@ def offer_receipt(parent, sale_id: int, message: str) -> None:
         print_receipt_direct(parent, sale_id, quiet=True)
         show_info(parent, message, "Sale completed")
         return
-    if ask_confirm(parent, f"{message}\n\nOpen the PDF receipt now?", "Sale completed"):
+    if ask_confirm(parent, f"{message}\n\nOpen the receipt?", "Sale completed"):
         print_receipt(parent, sale_id)
 
 

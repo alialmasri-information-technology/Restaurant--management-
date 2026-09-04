@@ -1,4 +1,9 @@
-"""Dashboard: today at a glance, a 7-day trend, low stock and recent sales."""
+"""Dashboard: what needs you, today at a glance, a trend, low stock, recent sales.
+
+The briefing sits above the numbers on purpose. A revenue figure answers a
+question somebody already has; a briefing tells the person who has just walked
+in what they did not know to ask about.
+"""
 
 from __future__ import annotations
 
@@ -8,11 +13,12 @@ import tkinter as tk
 import customtkinter as ctk
 
 from app.money import D, fmt_lbp, fmt_usd, to_lbp
+from app.services import briefing as briefing_service
 from app.services import products as products_service
 from app.services import reports as reports_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
-from app.ui import theme
+from app.ui import phrasing, theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import Card, DataTable, SectionTitle, StatCard
 
@@ -77,6 +83,71 @@ class BarChart(ctk.CTkFrame):
             )
 
 
+#: Tone -> the dot that leads the line, and its colour.
+TONE_MARKS = {
+    briefing_service.WARN: ("●", theme.WARNING),
+    briefing_service.NOTE: ("●", theme.PRIMARY),
+    briefing_service.CALM: ("●", theme.SUCCESS),
+}
+
+
+class Briefing(Card):
+    """The handful of things outstanding, each one a click from being dealt with."""
+
+    def __init__(self, parent, shell):
+        super().__init__(parent)
+        self.shell = shell
+        self.grid_columnconfigure(0, weight=1)
+        self._rows: list[ctk.CTkBaseClass] = []
+
+    def set_notes(self, notes) -> None:
+        for widget in self._rows:
+            widget.destroy()
+        self._rows = []
+
+        if not notes:
+            self._add_line(
+                "✓", theme.SUCCESS,
+                "Nothing needs you right now — the shop is in good shape.", "",
+                last=True,
+            )
+            return
+        for index, note in enumerate(notes):
+            mark, colour = TONE_MARKS.get(note.tone, TONE_MARKS[briefing_service.NOTE])
+            self._add_line(
+                mark, colour, note.text, note.screen, last=index == len(notes) - 1
+            )
+
+    def _add_line(
+        self, mark: str, colour, text: str, screen: str, *, last: bool = False
+    ) -> None:
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.grid(
+            row=len(self._rows), column=0, sticky="ew", padx=14,
+            pady=(12 if not self._rows else 2, 12 if last else 2),
+        )
+        row.grid_columnconfigure(1, weight=1)
+        self._rows.append(row)
+
+        ctk.CTkLabel(
+            row, text=mark, font=theme.font(13, "bold"), text_color=colour, width=16,
+        ).grid(row=0, column=0, sticky="w")
+
+        # A note whose screen you cannot open is a label, not a link — promising
+        # somewhere to go and then not going there is worse than plain text.
+        if screen and screen in self.shell.nav_buttons:
+            ctk.CTkButton(
+                row, text=text, anchor="w", height=24, font=theme.font(13),
+                fg_color="transparent", hover_color=theme.SURFACE_ALT,
+                text_color=theme.TEXT, corner_radius=6,
+                command=lambda: self.shell.show(screen),
+            ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        else:
+            ctk.CTkLabel(
+                row, text=text, anchor="w", font=theme.font(13), text_color=theme.TEXT,
+            ).grid(row=0, column=1, sticky="ew", padx=(8, 0))
+
+
 def _trend(current, previous, _label: str = ""):
     """Render a percentage move as ``("▲ 12%", 1)``, or nothing without a baseline."""
     ratio = reports_service.change_ratio(current, previous)
@@ -94,8 +165,8 @@ class DashboardView(ctk.CTkScrollableFrame):
         self.shell = shell
         self.grid_columnconfigure(0, weight=1)
 
-        self.header = PageHeader(self, "Dashboard", "")
-        self.header.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 16))
+        self.header = PageHeader(self, phrasing.greeting(shell.user.display_name), "")
+        self.header.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 14))
 
         ctk.CTkButton(
             self.header.actions, text="New Sale", height=38, width=130,
@@ -103,9 +174,13 @@ class DashboardView(ctk.CTkScrollableFrame):
             command=lambda: self.shell.show("pos"),
         ).grid(row=0, column=0)
 
+        # -- what needs you -------------------------------------------------- #
+        self.briefing = Briefing(self, shell)
+        self.briefing.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 14))
+
         # -- stat cards ----------------------------------------------------- #
         stats = ctk.CTkFrame(self, fg_color="transparent")
-        stats.grid(row=1, column=0, sticky="ew", padx=24)
+        stats.grid(row=2, column=0, sticky="ew", padx=24)
         for column in range(4):
             stats.grid_columnconfigure(column, weight=1, uniform="stat")
 
@@ -120,7 +195,7 @@ class DashboardView(ctk.CTkScrollableFrame):
 
         # -- trend + low stock ---------------------------------------------- #
         middle = ctk.CTkFrame(self, fg_color="transparent")
-        middle.grid(row=2, column=0, sticky="ew", padx=24, pady=(16, 0))
+        middle.grid(row=3, column=0, sticky="ew", padx=24, pady=(16, 0))
         middle.grid_columnconfigure(0, weight=3, uniform="mid")
         middle.grid_columnconfigure(1, weight=2, uniform="mid")
 
@@ -157,7 +232,7 @@ class DashboardView(ctk.CTkScrollableFrame):
 
         # -- recent sales ---------------------------------------------------- #
         recent_card = Card(self)
-        recent_card.grid(row=3, column=0, sticky="ew", padx=24, pady=(16, 24))
+        recent_card.grid(row=4, column=0, sticky="ew", padx=24, pady=(16, 24))
         recent_card.grid_columnconfigure(0, weight=1)
         SectionTitle(recent_card, "Recent sales").grid(
             row=0, column=0, sticky="ew", padx=16, pady=(14, 8)
@@ -179,12 +254,25 @@ class DashboardView(ctk.CTkScrollableFrame):
         )
         self.recent.set_formatter("total_usd", lambda value, _row: fmt_usd(value))
         self.recent.set_formatter(
-            "customer_name", lambda value, _row: value or "Walk-in"
+            "customer_name", lambda value, _row: phrasing.name_or(value)
+        )
+        # "20 minutes ago" is what somebody glancing at the till wants; the exact
+        # timestamp is still on the invoice, where it is needed.
+        self.recent.set_formatter(
+            "sale_time", lambda value, _row: phrasing.relative_time(value)
+        )
+        self.recent.set_formatter(
+            "status", lambda value, _row: "Refunded" if value != "Completed" else "Done"
         )
         self.recent.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 10))
         self.recent.on_double_click(lambda: self.shell.show("invoices"))
 
     def refresh(self) -> None:
+        self.header.set_title(phrasing.greeting(self.shell.user.display_name))
+        self.briefing.set_notes(
+            briefing_service.notes(is_admin=self.shell.user.is_admin)
+        )
+
         today = reports_service.today()
         month_start = reports_service.month_start()
         rate = settings_service.exchange_rate()
@@ -238,13 +326,13 @@ class DashboardView(ctk.CTkScrollableFrame):
         self.low_stock.set_rows(
             low,
             tag_func=lambda row: "danger" if row["stock_qty"] == 0 else "warning",
-            empty_message="Every product is above its reorder level.",
+            empty_message="Nothing needs reordering — every shelf is above its level.",
         )
 
         self.recent.set_rows(
             sales_service.list_sales(limit=12),
             tag_func=lambda row: "muted" if row["status"] != "Completed" else (),
-            empty_message="No sales recorded yet — start one from New Sale.",
+            empty_message="No sales yet today. Start one from New Sale.",
         )
         self.header.set_subtitle(
             f"{dt.date.today():%A, %d %B %Y}   ·   1 USD = {D(rate):,.0f} LBP"

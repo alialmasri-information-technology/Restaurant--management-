@@ -35,8 +35,12 @@ class LockScreen(ctk.CTkFrame):
         ctk.CTkLabel(
             card, text="Locked", font=theme.font(30, "bold"), text_color=theme.TEXT,
         ).grid(row=0, column=0, padx=36, pady=(44, 0))
+        # Says what is safe as well as what happened: somebody coming back to a
+        # locked till wants to know the half-built cart is still there.
         ctk.CTkLabel(
-            card, text=reason or "The screen locked after a period of inactivity.",
+            card,
+            text=(reason or "Nobody was here for a while, so the screen locked.")
+            + " Your work is exactly where you left it.",
             font=theme.font(12), text_color=theme.TEXT_MUTED,
             wraplength=320, justify="center",
         ).grid(row=1, column=0, padx=36, pady=(6, 22))
@@ -86,7 +90,7 @@ class LockScreen(ctk.CTkFrame):
             self.on_unlock()
             return
         self.password.set("")
-        self.message.configure(text="That password is not correct.")
+        self.message.configure(text="That password does not match. Try again.")
         self.entry.focus_set()
 
 
@@ -130,9 +134,9 @@ class ForcedPasswordChange(ctk.CTkToplevel):
         ctk.CTkLabel(
             body,
             text=(
-                f"{user.display_name} is signing in with a password that was set "
-                "for them, so somebody else knows it. Pick one of your own before "
-                "carrying on."
+                f"Welcome, {user.display_name.split(' ')[0]}. You signed in with a "
+                "password somebody else set for you, which means somebody else "
+                "knows it. Pick one of your own and it stays yours."
             ),
             font=theme.font(12), text_color=theme.TEXT_MUTED,
             wraplength=400, justify="left", anchor="w",
@@ -217,7 +221,11 @@ class ForcedPasswordChange(ctk.CTkToplevel):
             return
         self.settled = True
         self._release()
-        show_info(self.master, "Your password has been updated.", "Password changed")
+        show_info(
+            self.master,
+            "That's yours now — nobody else knows it. You are all set.",
+            "Password changed",
+        )
         self.on_done()
 
     def abandon(self) -> None:

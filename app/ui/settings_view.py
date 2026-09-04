@@ -692,7 +692,10 @@ class RestoreModal(Modal):
             height=10,
         )
         self.table.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 10))
-        self.table.set_rows(entries, empty_message="No backups yet.")
+        self.table.set_rows(
+            entries,
+            empty_message="No backups yet. Take one now — it takes a second.",
+        )
         self.table.select_first()
         self.table.on_double_click(self.submit)
 

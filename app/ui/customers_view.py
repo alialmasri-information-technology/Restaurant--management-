@@ -8,7 +8,7 @@ from app import config
 from app.money import fmt_usd, parse_amount
 from app.services import accounts as accounts_service
 from app.services import customers as customers_service
-from app.ui import theme
+from app.ui import phrasing, theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,
@@ -88,7 +88,9 @@ class CustomersView(ctk.CTkFrame):
         self.table.set_formatter(
             "credit_limit_usd", lambda value, _row: fmt_usd(value) if value else "—"
         )
-        self.table.set_formatter("last_purchase", lambda value, _row: value or "—")
+        self.table.set_formatter(
+            "last_purchase", lambda value, _row: phrasing.day_label(value, empty="Never")
+        )
         self.table.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         self.table.on_double_click(self._edit)
 
@@ -307,7 +309,7 @@ class CustomerHistoryModal(Modal):
         table.set_rows(
             customers_service.purchase_history(customer["customer_id"]),
             tag_func=lambda row: "muted" if row["status"] != "Completed" else (),
-            empty_message="This customer has no purchases yet.",
+            empty_message="Nothing bought yet — this will fill in after their first sale.",
         )
         ctk.CTkButton(self, text="Close", height=36, command=self.on_cancel).grid(
             row=2, column=0, pady=(0, 16)

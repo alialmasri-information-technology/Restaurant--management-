@@ -118,10 +118,18 @@ class AppShell(ctk.CTkFrame):
         """Cover the screen, keeping whatever is half-finished underneath."""
         root = self.winfo_toplevel()
         if hasattr(root, "lock_screen"):
-            root.lock_screen("Locked by the operator.")
+            root.lock_screen("You locked the screen.")
 
     def _logout(self) -> None:
-        if ask_confirm(self, "Sign out of RE4?", "Sign out"):
+        # Signing out tears the shell down, so a half-built cart goes with it —
+        # worth saying, since Lock is right next to this button and does not.
+        first = self.user.display_name.split(" ")[0]
+        if ask_confirm(
+            self,
+            f"Sign out, {first}?\n\nAnything half-finished on screen will be "
+            "lost. Use Lock instead if you are coming back.",
+            "Sign out",
+        ):
             self.on_logout()
 
     # -- navigation --------------------------------------------------------- #
@@ -204,10 +212,11 @@ class PageHeader(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
+        self.title_label = ctk.CTkLabel(
             self, text=title, font=theme.font(24, "bold"),
             text_color=theme.TEXT, anchor="w",
-        ).grid(row=0, column=0, sticky="ew")
+        )
+        self.title_label.grid(row=0, column=0, sticky="ew")
         self.subtitle_label = ctk.CTkLabel(
             self, text=subtitle or dt.date.today().strftime("%A, %d %B %Y"),
             font=theme.font(12), text_color=theme.TEXT_MUTED, anchor="w",
@@ -218,6 +227,10 @@ class PageHeader(ctk.CTkFrame):
         # the header out on pages that add no action buttons.
         self.actions = ctk.CTkFrame(self, fg_color="transparent", width=0, height=0)
         self.actions.grid(row=0, column=1, rowspan=2, sticky="e")
+
+    def set_title(self, text: str) -> None:
+        """Some titles are not constants — a greeting changes with the hour."""
+        self.title_label.configure(text=text)
 
     def set_subtitle(self, text: str) -> None:
         self.subtitle_label.configure(text=text)

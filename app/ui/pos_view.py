@@ -206,7 +206,7 @@ class PosView(ctk.CTkFrame):
         self.products.set_rows(
             rows,
             tag_func=lambda row: "muted" if row["stock_qty"] <= 0 else (),
-            empty_message="No products match this search.",
+            empty_message="Nothing matches. Try part of the name, the SKU, or scan it.",
         )
 
     def _add_from_search(self) -> None:
@@ -230,7 +230,12 @@ class PosView(ctk.CTkFrame):
 
     def _add_product(self, product) -> None:
         if product["stock_qty"] <= 0:
-            show_error(self, f"{product['name']} is out of stock.", "Out of stock")
+            show_error(
+                self,
+                f"There is none of {product['name']} left. Adjust the stock under "
+                "Products if the shelf says otherwise.",
+                "Out of stock",
+            )
             return
         try:
             self.cart.add_product(product, 1)
@@ -439,7 +444,9 @@ class PosView(ctk.CTkFrame):
         try:
             self.cart.set_qty(line.product_id, int(values["qty"]))
         except ValueError:
-            show_error(self, "Quantity must be a whole number.", "Invalid quantity")
+            show_error(
+                self, "Quantities are whole numbers — try 1, 2, 3.", "That is not a quantity"
+            )
         except sales_service.SaleError as exc:
             show_error(self, exc, "Not enough stock")
         self._render_cart()
@@ -527,7 +534,9 @@ class PosView(ctk.CTkFrame):
 
     def _park_sale(self) -> None:
         if self.cart.is_empty:
-            show_error(self, "There is nothing in the cart to park.", "Nothing to park")
+            show_error(
+                self, "There is nothing in the cart to hold on to yet.", "Nothing to park"
+            )
             return
         dialog = FormModal(
             self, "Park this sale",
@@ -555,12 +564,18 @@ class PosView(ctk.CTkFrame):
     def _open_parked(self) -> None:
         parked = sales_service.list_parked()
         if not parked:
-            show_info(self, "No sales are being held.", "Nothing parked")
+            show_info(
+                self,
+                "Nothing is parked. Press F2 during a sale to hold it and come "
+                "back to it later.",
+                "Nothing parked",
+            )
             return
         if not self.cart.is_empty and not ask_confirm(
             self,
-            "The current cart will be cleared when you resume a held sale.\n\n"
-            "Park or complete it first if you want to keep it.\n\nContinue?",
+            "Opening a held sale clears what is in the cart now.\n\n"
+            "Park this one first (F2) if you want to come back to it.\n\n"
+            "Carry on?",
             "Resume a held sale",
         ):
             return
@@ -597,7 +612,8 @@ class PosView(ctk.CTkFrame):
         if cart.unavailable:
             show_info(
                 self,
-                "These lines could not be restored:\n\n"
+                "The rest of the sale came back, but these are no longer in "
+                "the catalogue:\n\n"
                 + "\n".join(f"  {name}" for name in cart.unavailable),
                 "Some items were dropped",
             )
@@ -609,7 +625,9 @@ class PosView(ctk.CTkFrame):
             self._render_cart()
 
     def _clear_cart(self) -> None:
-        if self.cart.is_empty or ask_confirm(self, "Empty the cart?", "Clear sale"):
+        if self.cart.is_empty or ask_confirm(
+            self, "Empty the cart and start again?", "Clear sale"
+        ):
             self.cart.clear()
             self.cart.note = ""
             self.discount_var.set("0")
@@ -653,7 +671,7 @@ class PosView(ctk.CTkFrame):
         self.cart_table.set_rows(
             rows,
             tag_func=lambda row: "warning" if row["discount"] else (),
-            empty_message="Cart is empty.",
+            empty_message="Nothing in the cart yet — scan or search to add the first item.",
         )
         self.cart_title.configure(
             text=f"Cart · {self.cart.item_count} item{'s' if self.cart.item_count != 1 else ''}"
@@ -705,7 +723,9 @@ class PosView(ctk.CTkFrame):
 
     def _complete_sale(self) -> None:
         if self.cart.is_empty:
-            show_error(self, "Add at least one product first.", "Nothing to sell")
+            show_error(
+                self, "Add something to the cart before taking payment.", "Nothing to sell"
+            )
             return
         try:
             paid = parse_amount(self.paid_var.get(), "amount received")
@@ -742,7 +762,9 @@ class PosView(ctk.CTkFrame):
         change = D(sale["change_usd"])
         message = f"Invoice {sale['invoice_no']} — {fmt_usd(sale['total_usd'])}"
         if change > ZERO:
-            message += f"\nChange due: {fmt_usd(change)}"
+            # The one number the cashier has to act on before the customer walks
+            # away, so it goes on its own line and says what to do with it.
+            message += f"\n\nGive {fmt_usd(change)} change."
         offer_receipt(self, sale_id, message)
 
     # ------------------------------------------------------------------ #
@@ -836,7 +858,9 @@ class ParkedModal(Modal):
 
     def reload(self, parked=None) -> None:
         rows = sales_service.list_parked() if parked is None else parked
-        self.table.set_rows(rows, empty_message="Nothing is being held.")
+        self.table.set_rows(
+            rows, empty_message="Nothing is parked. Press F2 to hold a sale for later."
+        )
         self.table.select_first()
 
     def discard(self) -> None:

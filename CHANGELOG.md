@@ -5,6 +5,59 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [2.4.0] — 2026-09-04
+
+No schema change. This release is about how the application talks.
+
+### Added
+
+**A briefing on the dashboard.** The dashboard opened on a wall of numbers.
+Numbers answer a question you already have; somebody who has just walked in does
+not yet know what to ask. Above the figures there is now a short list of what
+actually needs a person, worst first — a till left open overnight, something off
+the shelf, a customer at their credit limit, a sale still parked, an order not
+yet received, a backup nobody has taken. Each line is one sentence and a click
+away from the screen that fixes it, and staff are only shown what they are
+allowed to act on. When there is genuinely nothing outstanding it says so, which
+is what makes the rest worth reading.
+
+**Times written the way people say them.** *Just now*, *22 minutes ago*,
+*Yesterday 17:40*, *Wednesday 11:00* — and then, deliberately, back to
+``12 Aug 11:00`` once a relative phrase would start hiding something. Receipts,
+reports and the audit log are untouched: they still print the exact timestamp,
+because that is what a document is for.
+
+### Changed
+
+- The dashboard greets whoever is signed in, by name and by the hour.
+- The sign-in screen greets rather than restating the product name.
+- The lock screen says what happened *and* that the half-built cart underneath
+  is exactly where it was left.
+- Signing out now warns that anything half-finished goes with it, and points at
+  Lock for anyone coming back.
+- The forced first password change reads as a welcome rather than an accusation.
+- Empty tables say what to do next instead of stating that a table is empty —
+  "Nothing is parked. Press F2 during a sale to hold it and come back to it
+  later" rather than "Nothing is being held."
+- Counts agree with their nouns and verbs throughout: *1 sale*, *3 sales*,
+  *1 customer owes*, *2 customers owe*.
+- A customer who has never bought anything reads *Never*, not an em dash.
+- Change due at the end of a sale is now an instruction — "Give $2.50 change" —
+  on its own line, because it is the one thing the cashier must act on before
+  the customer walks away.
+
+### Fixed
+
+- The till's shift history showed an open drawer as counted `$0.00` with a
+  `$0.00` variance, which reads as *counted, and empty*. An open drawer now
+  reads as not yet counted.
+- A shift opened seconds ago said it had been "open for a moment"; it now says
+  "Just opened".
+
+### Tests
+
+- 470, up from 388.
+
 ## [2.3.0] — 2026-09-04
 
 No schema change: everything here reads what was already being recorded.

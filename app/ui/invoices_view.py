@@ -10,7 +10,7 @@ from app.services import reports as reports_service
 from app.services import returns as returns_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
-from app.ui import theme
+from app.ui import phrasing, theme
 from app.ui.receipt_actions import print_receipt, print_return_slip, save_receipt_as
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
@@ -94,7 +94,14 @@ class InvoicesView(ctk.CTkFrame):
             fg_color="transparent",
         )
         self.table.set_formatter("total_usd", lambda value, _row: fmt_usd(value))
-        self.table.set_formatter("customer_name", lambda value, _row: value or "Walk-in")
+        self.table.set_formatter(
+            "customer_name", lambda value, _row: phrasing.name_or(value)
+        )
+        # A cashier looking for "the one from about an hour ago" reads this faster
+        # than a timestamp; anything older keeps its date.
+        self.table.set_formatter(
+            "sale_time", lambda value, _row: phrasing.relative_time(value)
+        )
         self.table.set_formatter(
             "status", lambda _value, row: sales_service.display_status(row)
         )
@@ -221,7 +228,7 @@ class InvoicesView(ctk.CTkFrame):
         self.table.set_rows(
             rows,
             tag_func=lambda row: "muted" if row["status"] != config.SALE_COMPLETED else (),
-            empty_message="No invoices in this range.",
+            empty_message="No invoices in this range. Try widening the dates.",
         )
         total = sum(
             row["total_usd"] for row in rows if row["status"] == config.SALE_COMPLETED

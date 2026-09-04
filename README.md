@@ -14,7 +14,7 @@ audit trail of who did what.
 
 | Screen | What you get |
 | --- | --- |
-| **Dashboard** | Revenue today and this month, gross profit, stock value, a 7-day revenue chart, restock alerts and recent sales |
+| **Dashboard** | A briefing of what needs you, revenue today and this month, gross profit, stock value, a 7-day revenue chart, restock alerts and recent sales |
 | **New Sale** | Scan a barcode or search, build a cart, override a price, discount a line, park a sale and pick it up later, take payment in USD or LBP, print a receipt |
 | **Till** | Open a shift with a counted float, record cash in and out, take an X report mid-shift, close with a count that reports the variance and prints a Z report, print the end-of-day sheet |
 | **Invoices** | Search past sales; view line-by-line detail; reprint or save the PDF; return part of an invoice or refund all of it |
@@ -265,6 +265,36 @@ who owe, and totals the receivable; anyone at or over their limit is flagged, so
 the person on the counter sees it before they try. *Reports* carries the same
 total and the list behind it, and `--check` prints it from the command line.
 
+## How it talks
+
+A till sits in a room with people in it — somebody opening up at seven, somebody
+covering a lunch rush, somebody locking the door and wanting to know whether the
+day went well. The application is written for them rather than at them.
+
+**The dashboard opens with a briefing.** Above the figures is a short list of
+what actually needs a person, worst first: a till left open overnight, something
+off the shelf, a customer at their credit limit, a sale still parked, an order
+not yet received, a backup nobody has taken. Each line is one sentence, and one
+click from the screen that fixes it. Staff are only shown what they are allowed
+to act on — a line pointing somewhere they cannot go is worse than no line at
+all. When nothing is outstanding it says so, and that is what makes the rest
+worth reading.
+
+**Times read the way people say them.** *Just now*, *22 minutes ago*,
+*Yesterday 17:40*, *Wednesday 11:00* — and then back to `12 Aug 11:00`, because
+past a couple of days a relative phrase stops helping and starts hiding
+something. Receipts, reports and the audit log are deliberately untouched: they
+print the exact timestamp, which is what a document is for.
+
+**Empty is not the same as broken.** An empty table says what to do next —
+"Nothing is parked. Press F2 during a sale to hold it and come back to it later"
+— rather than announcing that a table is empty.
+
+**Nothing is cheerful without cause.** "Nothing needs you right now" is only
+printed when nothing does, and an uncounted drawer reads as *not yet counted*
+rather than as a variance of zero. Warmth that is not backed by the data would
+cost the rest of it its credibility.
+
 ## Closing the day
 
 Everything needed to close up was already recorded, but it was scattered: the Z
@@ -336,17 +366,19 @@ app/
     products.py    customers.py   sales.py       reports.py    settings.py
     shifts.py      returns.py     purchases.py   suppliers.py   accounts.py
     catalog_io.py  backups.py     audit.py       stocktake.py   dayend.py
+    briefing.py
   ui/
     app.py               root window, login/shell swap
     shell.py             sidebar navigation and page header
     theme.py             colour tokens, fonts, ttk styling
+    phrasing.py          times, counts and greetings as a person would say them
     widgets.py           cards, tables, modals, forms
     security.py          lock screen, forced password change
     login.py             dashboard_view.py  pos_view.py     till_view.py
     products_view.py     purchasing_view.py customers_view.py
     invoices_view.py     reports_view.py    users_view.py
     settings_view.py     stocktake_view.py  receipt_actions.py
-tests/                   388 tests over the service layer and every screen
+tests/                   470 tests over the service layer and every screen
 pyproject.toml           metadata, the `re4` entry point, Ruff configuration
 RE4.spec                 PyInstaller build definition
 .github/workflows/ci.yml lint, test on three platforms, build the executable
@@ -363,7 +395,7 @@ rules directly testable.
 python -m unittest discover -s tests -t .
 ```
 
-388 tests, about 25 seconds. They cover money arithmetic, password hashing and
+470 tests, about 25 seconds. They cover money arithmetic, password hashing and
 the admin guards, sign-in throttling and forced password changes, stock
 movements, the checkout pipeline (including rollback when stock runs out
 mid-sale), invoice numbering, partial returns and their pricing, till shifts and
@@ -374,7 +406,10 @@ shift, and that an old sheet reprints the receivable that stood at the end of
 that day), stock takes (including that selling during a count survives it), purchase orders and
 weighted-average costing, CSV import (including that a failure part-way through
 rolls the whole file back), backup and restore, reporting aggregates, barcode
-label geometry and PDF generation, and the v2 → v4 upgrade against a database
+label geometry and PDF generation, the phrasing of times and counts (including
+where a relative time stops being helpful and the date comes back), what the
+briefing does and does not consider worth saying, and the v2 → v4 upgrade
+against a database
 shaped the way an older release left it — including putting a sale on account
 against a database migrated from before accounts existed.
 

@@ -352,3 +352,80 @@ class DayReportSmokeTests(DatabaseTestCase):
 
         self.assertEqual(len(produced), 1)
         self.assertTrue(produced[0].exists())
+
+
+@unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
+class BriefingSmokeTests(DatabaseTestCase):
+    """The dashboard's "what needs you" panel, and the greeting above it."""
+
+    opens_shift = False
+
+    def setUp(self) -> None:
+        super().setUp()
+        from app.services import backups as backups_service
+
+        backups_service.create("test")
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(lambda: _tear_down(self.root))
+
+    def _dashboard(self):
+        from app.ui.shell import AppShell
+
+        shell = AppShell(self.root, self.admin, lambda: None)
+        shell.grid(row=0, column=0, sticky="nsew")
+        self.root.update_idletasks()
+        return shell, shell._views["dashboard"]
+
+    def test_the_header_greets_the_person_signed_in(self):
+        _shell, view = self._dashboard()
+        self.assertIn(
+            self.admin.display_name.split(" ")[0], view.header.title_label.cget("text")
+        )
+
+    def test_an_outstanding_note_is_rendered(self):
+        # No till is open, which the briefing should say out loud.
+        _shell, view = self._dashboard()
+        self.assertTrue(view.briefing._rows)
+
+    def test_a_note_navigates_to_the_screen_that_fixes_it(self):
+        shell, view = self._dashboard()
+        row = view.briefing._rows[0]
+        button = next(
+            child for child in row.winfo_children() if isinstance(child, ctk.CTkButton)
+        )
+        button.invoke()
+        self.root.update_idletasks()
+        self.assertEqual(shell.current_key, "till")
+
+    def test_a_quiet_shop_gets_the_all_clear_line(self):
+        from app.services import shifts as shifts_service
+
+        shifts_service.open_shift(self.admin.user_id, opening_float=100)
+        _shell, view = self._dashboard()
+        view.refresh()
+        self.root.update_idletasks()
+        self.assertEqual(len(view.briefing._rows), 1)
+        labels = [
+            child.cget("text") for child in view.briefing._rows[0].winfo_children()
+            if isinstance(child, ctk.CTkLabel)
+        ]
+        self.assertTrue(any("good shape" in text for text in labels), labels)
+
+    def test_staff_are_not_offered_a_screen_they_cannot_open(self):
+        """A briefing line must never promise somewhere an employee cannot go."""
+        from app import auth
+        from app.ui.shell import AppShell
+
+        auth.create_user("briefed", "employee-pass", config.ROLE_EMPLOYEE)
+        employee = auth.authenticate("briefed", "employee-pass")
+        shell = AppShell(self.root, employee, lambda: None)
+        shell.grid(row=0, column=0, sticky="nsew")
+        self.root.update_idletasks()
+
+        for row in shell._views["dashboard"].briefing._rows:
+            for child in row.winfo_children():
+                if isinstance(child, ctk.CTkButton):
+                    child.invoke()
+                    self.root.update_idletasks()
+                    self.assertIn(shell.current_key, shell.nav_buttons)

@@ -7,7 +7,7 @@ import customtkinter as ctk
 from app import config
 from app.money import fmt_usd, parse_amount
 from app.services import shifts as shifts_service
-from app.ui import receipt_actions, theme
+from app.ui import phrasing, receipt_actions, theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,
@@ -38,6 +38,12 @@ SHIFT_COLUMNS = (
     ("variance_usd", "Variance", 100, "e"),
     ("status", "Status", 90, "w"),
 )
+
+
+def _open_for(opened_at) -> str:
+    """"Open for 4 hours" — but a shift opened seconds ago was just opened."""
+    elapsed = phrasing.elapsed(opened_at)
+    return "Just opened" if elapsed == "a moment" else f"Open for {elapsed}"
 
 
 class TillView(ctk.CTkFrame):
@@ -174,6 +180,12 @@ class TillView(ctk.CTkFrame):
             self.history.set_formatter(
                 key, lambda value, row: fmt_usd(value) if value is not None else "-"
             )
+        self.history.set_formatter(
+            "opened_at", lambda value, _row: phrasing.relative_time(value)
+        )
+        self.history.set_formatter(
+            "closed_at", lambda value, _row: phrasing.relative_time(value, empty="Still open")
+        )
         self.history.grid(row=3, column=0, columnspan=2, sticky="nsew")
         self.history.on_double_click(self.print_selected_report)
         body.grid_rowconfigure(3, weight=2, minsize=130)
@@ -189,21 +201,23 @@ class TillView(ctk.CTkFrame):
             button.configure(state="normal" if is_open else "disabled")
 
         if not is_open:
-            self.status_card.set("Closed", "No till shift is open")
+            self.status_card.set("Closed", "Open it before the first sale")
             for card in (self.sales_card, self.cash_card, self.expected_card):
                 card.set("-", "")
             for label in self.summary_rows.values():
                 label.configure(text="-")
-            self.movements.set_rows([], empty_message="Open the till to start a shift.")
+            self.movements.set_rows(
+                [], empty_message="Open the till to start a shift."
+            )
             self.header.set_subtitle("The till is closed")
         else:
             totals = shifts_service.totals(self.shift["shift_id"])
             self.status_card.set(
                 f"Open #{self.shift['shift_id']}",
-                f"Since {self.shift['opened_at']}",
+                _open_for(self.shift["opened_at"]),
             )
             self.sales_card.set(
-                fmt_usd(totals["sales_total"]), f"{totals['sale_count']} sale(s)"
+                fmt_usd(totals["sales_total"]), phrasing.plural(totals["sale_count"], "sale")
             )
             self.cash_card.set(
                 fmt_usd(totals["cash_sales"]),
@@ -217,16 +231,17 @@ class TillView(ctk.CTkFrame):
                 label.configure(text=fmt_usd(totals[key]))
             self.movements.set_rows(
                 shifts_service.movements(self.shift["shift_id"]),
-                empty_message="No cash has been paid in or out.",
+                empty_message="Nothing has been paid in or out of the drawer yet.",
             )
             self.header.set_subtitle(
-                f"Opened by {self.shift['opened_by_name'] or '-'}"
+                f"Opened by {self.shift['opened_by_name'] or 'somebody'}, "
+                f"{phrasing.relative_time(self.shift['opened_at']).lower()}"
             )
 
         self.history.set_rows(
             [self._history_row(row) for row in shifts_service.list_shifts(limit=25)],
             tag_func=self._history_tag,
-            empty_message="No shifts have been recorded yet.",
+            empty_message="No shifts yet. The first one starts when you open the till.",
         )
 
     @staticmethod
@@ -237,7 +252,10 @@ class TillView(ctk.CTkFrame):
         if counted is not None and data.get("counted_lbp") and rate:
             counted = counted + (data["counted_lbp"] / rate)
         data["counted_total"] = counted
-        data["closed_at"] = data.get("closed_at") or "-"
+        if not data.get("closed_at"):
+            data["counted_total"] = None
+            data["variance_usd"] = None
+        data["closed_at"] = data.get("closed_at") or ""
         return data
 
     @staticmethod

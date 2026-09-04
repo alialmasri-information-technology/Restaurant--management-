@@ -191,7 +191,7 @@ class StockTakeView(ctk.CTkFrame):
             ):
                 card.set("—", "")
             self.table.set_rows(
-                [], empty_message="Start a count to build the sheet."
+                [], empty_message="No count is open. Start one to build the sheet."
             )
             return
 
@@ -483,7 +483,7 @@ class HistoryModal(ctk.CTkToplevel):
                 else "warning" if row["status"] == config.TAKE_OPEN
                 else ""
             ),
-            empty_message="No stock takes have been run yet.",
+            empty_message="No counts yet. The first one tells you what the shelves really hold.",
         )
         table.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 12))
 

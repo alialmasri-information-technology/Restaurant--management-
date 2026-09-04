@@ -5,7 +5,7 @@ from __future__ import annotations
 import customtkinter as ctk
 
 from app import auth, config, db
-from app.ui import theme
+from app.ui import phrasing, theme
 from app.ui.widgets import Card
 
 
@@ -27,9 +27,12 @@ class LoginView(ctk.CTkFrame):
             card, text=config.APP_NAME, font=theme.font(34, "bold"),
             text_color=theme.PRIMARY,
         ).grid(row=0, column=0, padx=36, pady=(40, 0))
+        # The greeting is the first thing the shop says each morning, and it
+        # costs nothing to say it to a person rather than at one.
         ctk.CTkLabel(
-            card, text="Business & Retail Management", font=theme.font(13),
-            text_color=theme.TEXT_MUTED,
+            card, text=f"{phrasing.greeting()} — sign in to get started.",
+            font=theme.font(13), text_color=theme.TEXT_MUTED,
+            wraplength=320, justify="center",
         ).grid(row=1, column=0, padx=36, pady=(2, 26))
 
         self.username = ctk.StringVar()
@@ -87,8 +90,8 @@ class LoginView(ctk.CTkFrame):
             except auth.AuthError:
                 return ""
             return (
-                "First run — sign in as admin / admin123. You will be asked to "
-                "choose a real password straight away."
+                "This is the first run. Sign in as admin / admin123 and you will "
+                "be asked to pick a password of your own straight away."
             )
         return ""
 

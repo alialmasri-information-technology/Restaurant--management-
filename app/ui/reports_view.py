@@ -235,7 +235,7 @@ class ReportsView(ctk.CTkScrollableFrame):
         self.top_products.set_rows(reports_service.top_products(date_from, date_to))
         self.top_customers.set_rows(
             reports_service.top_customers(date_from, date_to),
-            empty_message="No sales linked to a customer yet.",
+            empty_message="No sales linked to a customer yet — add one at the till.",
         )
         self.by_payment.set_rows(reports_service.payment_breakdown(date_from, date_to))
         self.by_user.set_rows(reports_service.sales_by_user(date_from, date_to))
@@ -250,7 +250,7 @@ class ReportsView(ctk.CTkScrollableFrame):
                 and row["balance_usd"] >= row["credit_limit_usd"] - 0.005
                 else "warning"
             ),
-            empty_message="Nobody owes you anything.",
+            empty_message="Nobody owes you anything. Every account is settled.",
         )
 
         label = self.range_var.get().lower()

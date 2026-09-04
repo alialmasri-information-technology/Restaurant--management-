@@ -13,7 +13,7 @@ from app.services import catalog_io
 from app.services import products as products_service
 from app.services import settings as settings_service
 from app.services import suppliers as suppliers_service
-from app.ui import theme
+from app.ui import phrasing, theme
 from app.ui.receipt_actions import open_file
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
@@ -375,7 +375,7 @@ class ProductsView(ctk.CTkFrame):
         self.table.set_rows(
             rows,
             tag_func=_product_tag,
-            empty_message="No products match these filters.",
+            empty_message="Nothing matches these filters. Clear the search to see everything.",
         )
 
     def refresh(self) -> None:
@@ -423,11 +423,13 @@ class StockHistoryModal(Modal):
         table.set_formatter(
             "change_qty", lambda value, _row: f"+{value}" if value > 0 else str(value)
         )
+        table.set_formatter("log_time", lambda value, _row: phrasing.relative_time(value))
+        table.set_formatter("note", lambda value, _row: phrasing.truncate(value, 40))
         table.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 12))
         table.set_rows(
             products_service.stock_history(product["product_id"]),
             tag_func=lambda row: "success" if row["change_qty"] > 0 else "danger",
-            empty_message="No stock movements recorded.",
+            empty_message="Nothing has moved this product's stock yet.",
         )
         ctk.CTkButton(self, text="Close", height=36, command=self.on_cancel).grid(
             row=2, column=0, pady=(0, 16)
@@ -473,7 +475,8 @@ class CategoriesModal(Modal):
 
     def reload(self) -> None:
         self.table.set_rows(
-            products_service.list_categories(), empty_message="No categories yet."
+            products_service.list_categories(),
+            empty_message="No categories yet. They make the catalogue easier to search.",
         )
 
     def _add(self) -> None:

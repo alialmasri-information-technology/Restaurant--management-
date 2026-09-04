@@ -17,11 +17,11 @@ def show_error(parent, message: str, title: str = "Something went wrong") -> Non
     messagebox.showerror(title, str(message), parent=parent)
 
 
-def show_info(parent, message: str, title: str = "Done") -> None:
+def show_info(parent, message: str, title: str = "All done") -> None:
     messagebox.showinfo(title, str(message), parent=parent)
 
 
-def ask_confirm(parent, message: str, title: str = "Please confirm") -> bool:
+def ask_confirm(parent, message: str, title: str = "Just checking") -> bool:
     return bool(messagebox.askyesno(title, str(message), parent=parent))
 
 
@@ -164,7 +164,7 @@ class DataTable(ctk.CTkFrame):
         """Register ``func(value, row) -> str`` for one column."""
         self._formatters[key] = func
 
-    def set_rows(self, rows, tag_func=None, empty_message: str = "Nothing to show yet.") -> None:
+    def set_rows(self, rows, tag_func=None, empty_message: str = "Nothing here yet.") -> None:
         selected = self.selected_id()
         self.tree.delete(*self.tree.get_children())
 
