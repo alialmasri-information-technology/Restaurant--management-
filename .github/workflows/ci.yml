@@ -21,9 +21,12 @@ jobs:
           python-version: "3.12"
       - run: pip install ruff
       - run: ruff check app tests main.py
-      - name: Check formatting is at least self-consistent
-        run: ruff format --diff app tests main.py
-        continue-on-error: true
+      # Advisory only: the source is hand-formatted and deliberately disagrees
+      # with ruff format in places. Printing the diff is useful; failing the step
+      # every single run is not — an annotation that is always red teaches people
+      # to stop reading annotations.
+      - name: Show where ruff format would disagree
+        run: ruff format --diff app tests main.py || true
 
   test:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
