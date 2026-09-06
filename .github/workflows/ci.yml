@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: ["**"]
+    # Version tags build the executable and the installer and attach them to
+    # a GitHub release; without this line the release job could never run.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
