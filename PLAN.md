@@ -69,9 +69,13 @@ Work proceeds in phases; each one ends with the full test suite and ruff green.
   header)~~ — done.
 - ~~CSV export for customers and for the audit trail, joining sales (Reports)
   and the catalogue (Products), which could already export~~ — done.
+- ~~Per-category tax rates~~ — done (v2.6.0, schema v5).
+- ~~Gift cards: sold at the till, redeemed as split payment, admin-managed~~ —
+  done (v2.6.0, schema v6).
+- ~~Layaways: held with a frozen price and a cash-honest deposit, collected
+  through the normal sale pipeline~~ — done (v2.6.0, schema v7).
 - LBP dual pricing was already consistent across labels, invoices and
   receipts; nothing to change.
-- Candidates for later: layaways, gift cards, per-category tax profiles.
 
 ## Phase 6 — Quality gates and release discipline
 
