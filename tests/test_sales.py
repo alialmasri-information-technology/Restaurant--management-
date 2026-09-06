@@ -50,6 +50,41 @@ class CartTests(DatabaseTestCase):
         line = cart.add_product(self.product, 3)
         self.assertEqual(line.line_total, Decimal("13.50"))
 
+    def test_a_category_rate_travels_with_the_line(self):
+        category_id = products_service.create_category("Essentials", tax_rate="5")
+        product_id = products_service.create_product(
+            sku="S2", name="Bread", price_usd="1.00", stock_qty=5,
+            category_id=category_id,
+        )
+        cart = service.Cart()
+        cart.add_product(products_service.get_product(product_id), 2)
+        cart.add_product(self.product, 1)  # uncategorised: store-wide rate
+        settings_service.set_value("tax_rate", "10")
+
+        subtotal, _discount, tax, total = cart.totals()
+        self.assertEqual(subtotal, Decimal("6.50"))
+        # 5% on the bread, the store's 10% on the widget.
+        self.assertEqual(tax, Decimal("0.55"))
+        self.assertEqual(total, Decimal("7.05"))
+
+    def test_a_sale_stores_the_mixed_tax(self):
+        category_id = products_service.create_category("Essentials", tax_rate="5")
+        product_id = products_service.create_product(
+            sku="S2", name="Bread", price_usd="1.00", stock_qty=5,
+            category_id=category_id,
+        )
+        settings_service.set_value("tax_rate", "10")
+        cart = service.Cart()
+        cart.add_product(products_service.get_product(product_id), 2)
+        cart.add_product(self.product, 1)
+        sale_id = service.create_sale(
+            cart=cart, user_id=self.admin.user_id,
+            payment_method="Cash", amount_paid="20",
+        )
+        sale = service.get_sale(sale_id)
+        self.assertEqual(sale["tax_usd"], 0.55)
+        self.assertEqual(sale["total_usd"], 7.05)
+
 
 class CheckoutTests(DatabaseTestCase):
     def setUp(self):

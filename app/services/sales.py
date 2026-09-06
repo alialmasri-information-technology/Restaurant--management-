@@ -35,6 +35,10 @@ class CartLine:
     stock_available: int = 0
     discount: Decimal = field(default_factory=lambda: ZERO)
     list_price: Decimal = field(default_factory=lambda: ZERO)
+    # This category's tax percentage at the time the line was added; None
+    # means the store-wide rate. Taken when the line is added, the way the
+    # cost is, so a category rate changed mid-sale does not rewrite the cart.
+    tax_rate: Decimal | None = None
 
     @property
     def line_total(self) -> Decimal:
@@ -79,6 +83,14 @@ class Cart:
         if existing:
             existing.qty = wanted
             return existing
+        # Some callers hand in rows that did not select the category rate;
+        # a sqlite3.Row has no __contains__, so the columns are checked by name.
+        columns = product.keys()
+        rate = (
+            product["category_tax_rate"]
+            if "category_tax_rate" in columns and product["category_tax_rate"] is not None
+            else None
+        )
         line = CartLine(
             product_id=product["product_id"],
             sku=product["sku"],
@@ -87,6 +99,7 @@ class Cart:
             unit_price=usd(product["price_usd"]),
             stock_available=product["stock_qty"],
             list_price=usd(product["price_usd"]),
+            tax_rate=D(rate) if rate is not None else None,
         )
         self.lines.append(line)
         return line
@@ -159,7 +172,10 @@ class Cart:
         if tax_rate is None:
             tax_rate = settings_service.tax_rate()
         return compute_totals(
-            [(line.qty, line.unit_price, line.discount) for line in self.lines],
+            [
+                (line.qty, line.unit_price, line.discount, line.tax_rate)
+                for line in self.lines
+            ],
             discount=self.discount,
             tax_rate=tax_rate,
         )

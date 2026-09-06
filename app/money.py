@@ -93,25 +93,44 @@ def compute_totals(lines, discount=0, tax_rate=0):
 
     ``lines`` is any iterable of ``(qty, unit_price)`` or
     ``(qty, unit_price, line_discount)`` tuples, or of objects exposing ``qty``,
-    ``unit_price`` and optionally ``discount``. The ``discount`` argument is the
-    invoice-level discount in USD, clamped to the subtotal so a sale can never
-    go negative. Tax is a percentage applied to the discounted subtotal.
+    ``unit_price`` and optionally ``discount`` and ``tax_rate``. A line's own
+    ``tax_rate`` — a percentage, or None — wins over the ``tax_rate`` argument,
+    which is the store-wide rate a category rate may override. The ``discount``
+    argument is the invoice-level discount in USD, clamped to the subtotal so a
+    sale can never go negative, and shared across lines in proportion to what
+    each is worth before its own tax.
 
     Returns ``(subtotal, discount, tax, total)`` as Decimals.
     """
-    subtotal = ZERO
+    nets: list[tuple[Decimal, Decimal | None]] = []
     for line in lines:
         if isinstance(line, (tuple, list)):
             qty, unit_price = line[0], line[1]
             line_discount = line[2] if len(line) > 2 else ZERO
+            line_rate = line[3] if len(line) > 3 else None
         else:
             qty, unit_price = line.qty, line.unit_price
             line_discount = getattr(line, "discount", ZERO)
-        subtotal += line_total(qty, unit_price, line_discount)
-    subtotal = usd(subtotal)
+            line_rate = getattr(line, "tax_rate", None)
+        nets.append((line_total(qty, unit_price, line_discount), line_rate))
+    subtotal = usd(sum((net for net, _ in nets), ZERO))
 
     discount = usd(max(ZERO, min(D(discount), subtotal)))
-    taxable = subtotal - discount
-    tax = usd(taxable * D(tax_rate) / Decimal(100))
-    total = usd(taxable + tax)
+    resolved = {
+        D(rate) if rate is not None else D(tax_rate) for _, rate in nets
+    }
+    if len(resolved) == 1:
+        # The common case, and the exact arithmetic it has always been: one
+        # rate on the discounted subtotal.
+        tax = usd((subtotal - discount) * resolved.pop() / Decimal(100))
+    else:
+        # The invoice discount comes off before tax, so each line's taxable
+        # share is what it keeps after its slice of that discount.
+        factor = (subtotal - discount) / subtotal if subtotal > 0 else ZERO
+        tax = usd(sum(
+            (net * factor * D(rate if rate is not None else tax_rate) / Decimal(100)
+             for net, rate in nets),
+            ZERO,
+        ))
+    total = usd((subtotal - discount) + tax)
     return subtotal, discount, tax, total

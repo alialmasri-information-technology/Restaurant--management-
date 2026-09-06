@@ -448,17 +448,24 @@ class CategoriesModal(Modal):
         )
         self.table = DataTable(
             self,
-            columns=[("name", "Name", 340, "w")],
+            columns=[
+                ("name", "Name", 220, "w"),
+                ("tax_rate", "Tax %", 90, "e"),
+            ],
             id_key="category_id",
             height=10,
         )
         self.table.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 10))
+        self.table.set_formatter(
+            "tax_rate", lambda value, _row: "—" if value is None else f"{value:g}%"
+        )
 
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
         for column, (label, command, colour) in enumerate((
             ("Add", self._add, theme.PRIMARY),
             ("Rename", self._rename, theme.NEUTRAL),
+            ("Tax rate", self._set_tax, theme.NEUTRAL),
             ("Delete", self._delete, theme.DANGER),
             ("Close", self.on_cancel, theme.NEUTRAL),
         )):
@@ -482,9 +489,45 @@ class CategoriesModal(Modal):
 
     def _add(self) -> None:
         dialog = FormModal(
-            self, "Add category", [{"key": "name", "label": "Category name"}],
-            lambda values: products_service.create_category(values["name"]),
+            self, "Add category",
+            [
+                {"key": "name", "label": "Category name"},
+                {"key": "tax_rate", "label": "Tax rate % — leave blank for the "
+                                             "store-wide rate", "type": "entry"},
+            ],
+            lambda values: products_service.create_category(
+                values["name"],
+                tax_rate=values["tax_rate"] or None,
+            ),
             submit_text="Add",
+        )
+        if dialog.wait_result():
+            self.reload()
+
+    def _set_tax(self) -> None:
+        category_id = self.table.selected_int()
+        if category_id is None:
+            show_error(self, "Pick a category first.", "Nothing selected")
+            return
+        current = next(
+            (c for c in products_service.list_categories()
+             if c["category_id"] == category_id), None
+        )
+        if current is None:
+            return
+        # Essentials are often taxed differently from everything else: one
+        # percentage per category, blank meaning whatever the store charges.
+        dialog = FormModal(
+            self, f"Tax rate — {current['name']}",
+            [{
+                "key": "tax_rate", "type": "entry",
+                "value": "" if current["tax_rate"] is None else f"{current['tax_rate']:g}",
+                "hint": "Leave blank to use the store-wide tax rate.",
+            }],
+            lambda values: products_service.set_category_tax(
+                category_id, values["tax_rate"]
+            ),
+            submit_text="Save rate",
         )
         if dialog.wait_result():
             self.reload()

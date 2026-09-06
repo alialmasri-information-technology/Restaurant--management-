@@ -53,6 +53,41 @@ class TotalsTests(unittest.TestCase):
     def test_empty_cart_totals_zero(self):
         self.assertEqual(compute_totals([]), (Decimal("0.00"),) * 4)
 
+    def test_a_uniform_line_rate_matches_the_store_rate_exactly(self):
+        # One percentage is one percentage, however it reaches the line.
+        self.assertEqual(
+            compute_totals([(3, "0.50", 0, "11"), (2, "4.50", 0, "11")],
+                           discount="1.00", tax_rate="11"),
+            compute_totals([(3, "0.50"), (2, "4.50")], discount="1.00", tax_rate="11"),
+        )
+
+    def test_category_rates_override_the_store_rate(self):
+        # $4.50 line taxed at 20%, $0.50 line untaxed (0%), invoice discount 1.00.
+        # The discount comes off before tax, shared in proportion to what each
+        # line is worth: the 4.50 line's taxable share is 3.60, the 0.50's 0.40.
+        subtotal, discount, tax, total = compute_totals(
+            [(1, "4.50", 0, "20"), (1, "0.50", 0, "0")], discount="1.00", tax_rate="11"
+        )
+        self.assertEqual(subtotal, Decimal("5.00"))
+        self.assertEqual(discount, Decimal("1.00"))
+        self.assertEqual(tax, Decimal("0.72"))  # 20% of 3.60; the 0.50 line is untaxed
+        self.assertEqual(total, Decimal("4.72"))
+
+    def test_a_line_without_a_rate_uses_the_store_rate(self):
+        subtotal, _d, tax, total = compute_totals(
+            [(1, "4.50", 0, "20"), (1, "0.50")], tax_rate="10"
+        )
+        self.assertEqual(subtotal, Decimal("5.00"))
+        # 20% of 4.50 plus 10% of 0.50.
+        self.assertEqual(tax, Decimal("0.95"))
+        self.assertEqual(total, Decimal("5.95"))
+
+    def test_zero_taxed_lines_contribute_nothing(self):
+        _s, _d, tax, _t = compute_totals(
+            [(2, "1.00", 0, "0"), (1, "3.00", 0, "0")], tax_rate="15"
+        )
+        self.assertEqual(tax, Decimal("0.00"))
+
 
 class LbpTests(unittest.TestCase):
     def test_converts_and_rounds_to_the_step(self):

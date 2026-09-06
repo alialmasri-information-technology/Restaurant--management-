@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from app import config, db, logs
-from app.money import D, to_float, usd
+from app.money import ZERO, D, to_float, usd
 from app.services import audit
 
 
@@ -34,12 +34,15 @@ def get_or_create_category(name: str) -> int | None:
     return create_category(name)
 
 
-def create_category(name: str) -> int:
+def create_category(name: str, tax_rate=None) -> int:
     name = (name or "").strip()
     if not name:
         raise ProductError("Category name is required.")
     try:
-        return db.execute("INSERT INTO categories (name) VALUES (?)", (name,))
+        return db.execute(
+            "INSERT INTO categories (name, tax_rate) VALUES (?, ?)",
+            (name, to_float(tax_rate) if tax_rate is not None else None),
+        )
     except sqlite3.IntegrityError as exc:
         raise ProductError(f"A category named '{name}' already exists.") from exc
 
@@ -56,6 +59,25 @@ def rename_category(category_id: int, name: str) -> None:
         raise ProductError(f"A category named '{name}' already exists.") from exc
 
 
+def set_category_tax(category_id: int, tax_rate) -> None:
+    """One category's own tax percentage; blank means the store-wide rate."""
+    value = None
+    if tax_rate is not None and str(tax_rate).strip() != "":
+        value = D(tax_rate)
+        if value < ZERO:
+            raise ProductError("A tax rate cannot be negative.")
+        if value > 100:
+            raise ProductError("A tax rate cannot be more than 100%.")
+    db.execute(
+        "UPDATE categories SET tax_rate = ? WHERE category_id = ?",
+        (to_float(value) if value is not None else None, category_id),
+    )
+    audit.record(
+        "Category tax changed", "category", category_id,
+        "" if value is None else f"{value}%",
+    )
+
+
 def delete_category(category_id: int) -> None:
     """Products in the category are kept and become uncategorised."""
     db.execute("DELETE FROM categories WHERE category_id = ?", (category_id,))
@@ -66,7 +88,8 @@ def delete_category(category_id: int) -> None:
 # --------------------------------------------------------------------------- #
 
 _PRODUCT_SELECT = """
-    SELECT p.*, c.name AS category_name, s.name AS supplier_name,
+    SELECT p.*, c.name AS category_name, c.tax_rate AS category_tax_rate,
+           s.name AS supplier_name,
            (p.stock_qty <= p.reorder_level) AS is_low_stock,
            (p.stock_qty * p.cost_usd) AS stock_value_usd
     FROM products p

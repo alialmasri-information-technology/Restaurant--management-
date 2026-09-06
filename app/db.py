@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app import config, logs
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 #: How long a writer waits for a competing lock before giving up. Two tills on
 #: one database, or a backup running while a sale commits, otherwise surface as
@@ -43,7 +43,10 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS categories (
     category_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT NOT NULL UNIQUE COLLATE NOCASE
+    name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    -- Tax percentage for products in this category, overriding the store-wide
+    -- rate. NULL falls back to it; essentials are often taxed differently.
+    tax_rate    REAL CHECK (tax_rate IS NULL OR tax_rate >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS suppliers (
@@ -319,6 +322,9 @@ ADDED_COLUMNS = (
     ("users", "last_login_at", "TEXT"),
     # v4
     ("customers", "credit_limit_usd", "REAL NOT NULL DEFAULT 0"),
+    # v5
+    ("categories", "tax_rate",
+     "REAL CHECK (tax_rate IS NULL OR tax_rate >= 0)"),
 )
 
 # Every column the services filter or aggregate on that the schema above does
