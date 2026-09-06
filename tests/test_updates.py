@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 
 from app import config
@@ -36,6 +37,24 @@ class VersionTests(unittest.TestCase):
 
 class CheckCacheTests(DatabaseTestCase):
     opens_shift = False
+
+    def setUp(self) -> None:
+        super().setUp()
+        # The suite-wide switch turns the check off so no screen built in a
+        # test can phone home; these tests exercise the check itself, so they
+        # take the switch off and put it back.
+        self._original_switch = os.environ.pop(updates.TEST_SWITCH, None)
+
+    def tearDown(self) -> None:
+        if self._original_switch is not None:
+            os.environ[updates.TEST_SWITCH] = self._original_switch
+        else:
+            os.environ.pop(updates.TEST_SWITCH, None)
+        super().tearDown()
+
+    def test_the_switch_silences_the_check_entirely(self):
+        os.environ[updates.TEST_SWITCH] = "1"
+        self.assertIsNone(updates.check(settings_service))
 
     def test_a_newer_release_is_found_and_then_cached_for_the_day(self):
         class FakeNetwork:

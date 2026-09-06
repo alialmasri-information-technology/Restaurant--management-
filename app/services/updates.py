@@ -11,10 +11,18 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import urllib.error
 import urllib.request
 
 from app import config
+
+#: Set in a process that must not phone home. The test suite drives real
+#: screens, and a shell built in a test fires a real check on the background
+#: worker — which lands whenever it lands, writing its cache rows into
+#: whichever database happens to be current by then. The switch makes check()
+#: a quiet no-op so a test process never talks to the network or races itself.
+TEST_SWITCH = "RE4_SKIP_UPDATE_CHECK"
 
 #: Ask at most once a day. A shop that opens once does not need to be told
 #: twice that it is current.
@@ -79,6 +87,9 @@ def check(settings_service) -> tuple[str, str] | None:
     stub. The cache is a courtesy to the network, not to the shop: a machine
     that opens six times a day asks GitHub once.
     """
+    if os.environ.get(TEST_SWITCH):
+        return None
+
     today = dt.date.today().isoformat()
     if settings_service.get(CACHE_CHECKED_AT, "") == today:
         version = settings_service.get(CACHE_VERSION, "")

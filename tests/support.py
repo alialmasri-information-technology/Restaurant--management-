@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import unittest
@@ -9,8 +10,16 @@ from pathlib import Path
 
 from app import auth, config, db
 from app.services import shifts as shifts_service
+from app.services import updates as updates_service
 
 REDIRECTED_DIRS = ("RECEIPTS_DIR", "BACKUPS_DIR", "IMAGES_DIR", "LOGS_DIR")
+
+# The test process must not phone home. A screen built in a test fires a real
+# update check on the background worker, and that thread lands whenever it
+# lands — often inside the *next* test, writing its cache rows into that
+# test's database. The switch makes the check a no-op for the whole process;
+# the update-check tests switch it back off around themselves deliberately.
+os.environ.setdefault(updates_service.TEST_SWITCH, "1")
 
 #: PBKDF2 rounds while testing. The production figure is deliberately expensive,
 #: which is the right trade for one sign-in a day and the wrong one for a suite
