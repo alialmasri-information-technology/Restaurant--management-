@@ -336,6 +336,7 @@ def create_sale(
     exchange_rate=None,
     gift_card_code: str = "",
     gift_card_amount=None,
+    paid_already=0,
 ) -> int:
     """Commit a cart as an invoice. Returns the new ``sale_id``.
 
@@ -343,7 +344,10 @@ def create_sale(
     tills racing for the last unit cannot both succeed. A gift card pays what
     it holds towards the total first — its balance is re-read and re-checked
     inside that same transaction — and the rest is taken by the chosen
-    payment method as usual.
+    payment method as usual. ``paid_already`` is money taken for this invoice
+    before today's till work began (a layaway's deposit): the due amount and
+    the change are computed against what is still owing, and the invoice
+    records everything it has received across both moments.
     """
     if cart.is_empty:
         raise SaleError("Add at least one product before completing the sale.")
@@ -389,6 +393,8 @@ def create_sale(
         if gift_applied <= ZERO:
             raise SaleError("There is nothing on this sale for the card to pay for.")
     remaining_due = total - gift_applied
+    already = usd(max(ZERO, D(paid_already)))
+    remaining_due = usd(remaining_due - already)
 
     if customer_id is None:
         customer_id = cart.customer_id
@@ -437,7 +443,7 @@ def create_sale(
                 float(exchange_rate),
                 payment_method,
                 paid_currency,
-                float(paid),
+                float(paid + already),
                 to_float(change),
                 config.SALE_COMPLETED,
                 (note or cart.note or "").strip(),

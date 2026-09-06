@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app import config, logs
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 #: How long a writer waits for a competing lock before giving up. Two tills on
 #: one database, or a backup running while a sale commits, otherwise surface as
@@ -293,6 +293,38 @@ CREATE TABLE IF NOT EXISTS gift_card_events (
     note       TEXT    NOT NULL DEFAULT ''
 );
 
+-- A layaway: goods set aside for a customer who pays over time. Prices and
+-- the total are frozen when the goods are held, so a later price change
+-- cannot quietly rewrite somebody's agreement; the deposit is cash in the
+-- drawer, recorded as a cash movement like any other money the till holds.
+-- Stock is not decremented while held -- the shelves keep their numbers and
+-- collection runs the sale through the same stock check as any other sale.
+CREATE TABLE IF NOT EXISTS layaways (
+    layaway_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    reference         TEXT    NOT NULL UNIQUE,
+    customer_id       INTEGER REFERENCES customers (customer_id) ON DELETE SET NULL,
+    user_id           INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    created_at        TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    due_date          TEXT    NOT NULL DEFAULT '',
+    total_usd         REAL    NOT NULL CHECK (total_usd >= 0),
+    deposit_usd       REAL    NOT NULL DEFAULT 0 CHECK (deposit_usd >= 0),
+    status            TEXT    NOT NULL DEFAULT 'Held'
+                              CHECK (status IN ('Held', 'Collected', 'Cancelled')),
+    completed_sale_id INTEGER REFERENCES sales (sale_id) ON DELETE SET NULL,
+    note              TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS layaway_items (
+    layaway_item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    layaway_id      INTEGER NOT NULL REFERENCES layaways (layaway_id) ON DELETE CASCADE,
+    product_id      INTEGER REFERENCES products (product_id) ON DELETE SET NULL,
+    sku_at_hold     TEXT    NOT NULL DEFAULT '',
+    name_at_hold    TEXT    NOT NULL,
+    qty             INTEGER NOT NULL CHECK (qty > 0),
+    unit_price_usd  REAL    NOT NULL CHECK (unit_price_usd >= 0),
+    line_total_usd  REAL    NOT NULL CHECK (line_total_usd >= 0)
+);
+
 -- A physical inventory count. Expected quantities are frozen when the count
 -- opens, so trading during the count does not move the goalposts; the variance
 -- is only posted to stock when the count is applied.
@@ -377,6 +409,8 @@ LATE_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_log (action)",
     "CREATE INDEX IF NOT EXISTS idx_card_events      ON gift_card_events (card_id)",
     "CREATE INDEX IF NOT EXISTS idx_card_events_sale ON gift_card_events (sale_id)",
+    "CREATE INDEX IF NOT EXISTS idx_layaway_items    ON layaway_items (layaway_id)",
+    "CREATE INDEX IF NOT EXISTS idx_layaway_status   ON layaways (status)",
 )
 
 

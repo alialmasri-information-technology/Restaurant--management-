@@ -7,6 +7,7 @@ import customtkinter as ctk
 from app import config
 from app.money import fmt_usd, parse_amount
 from app.services import giftcards as giftcards_service
+from app.services import layaways as layaways_service
 from app.services import shifts as shifts_service
 from app.ui import phrasing, receipt_actions, theme
 from app.ui.shell import PageHeader
@@ -133,6 +134,12 @@ class TillView(ctk.CTkFrame):
             fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
             command=lambda: GiftCardsModal(self, self.user),
         ).grid(row=0, column=6, padx=(8, 0))
+
+        ctk.CTkButton(
+            actions, text="Layaways", width=110, height=38,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=lambda: LayawaysModal(self, self.user),
+        ).grid(row=0, column=7, padx=(8, 0))
 
     def _build_body(self) -> None:
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -626,3 +633,189 @@ class GiftCardHistoryModal(ctk.CTkToplevel):
             self.focus_force()
         except Exception:  # noqa: BLE001  # pragma: no cover - window gone
             pass
+
+
+class LayawaysModal(ctk.CTkToplevel):
+    """Goods set aside and the money still owed on them."""
+
+    def __init__(self, parent, user):
+        super().__init__(parent)
+        self.title("Layaways")
+        self.configure(fg_color=theme.BG)
+        self.geometry("920x540")
+        self.transient(parent.winfo_toplevel())
+        self.user = user
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(3, weight=1)
+
+        SectionTitle(self, "Layaways").grid(
+            row=0, column=0, sticky="ew", padx=18, pady=(18, 4)
+        )
+        self.summary_label = ctk.CTkLabel(
+            self, text="", font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w"
+        )
+        self.summary_label.grid(row=1, column=0, sticky="ew", padx=18)
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 4))
+        bar.grid_columnconfigure(0, weight=1)
+        self.search_var = ctk.StringVar()
+        self.search_var.trace_add("write", widgets_debounce(self, 250, self.reload))
+        ctk.CTkEntry(
+            bar, textvariable=self.search_var, height=34,
+            placeholder_text="Search by reference, customer or note�",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.show_all = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            bar, text="Show collected and cancelled", variable=self.show_all,
+            command=self.reload,
+        ).grid(row=0, column=1)
+
+        self.table = DataTable(
+            self,
+            columns=[
+                ("reference", "Reference", 150, "w"),
+                ("customer_name", "Customer", 150, "w"),
+                ("item_count", "Items", 60, "center"),
+                ("total_usd", "Total", 100, "e"),
+                ("deposit_usd", "Deposited", 100, "e"),
+                ("owing", "Still owed", 100, "e"),
+                ("due_date", "Due", 100, "w"),
+                ("status", "Status", 90, "center"),
+            ],
+            id_key="layaway_id",
+            height=12,
+        )
+        self.table.grid(row=3, column=0, sticky="nsew", padx=18, pady=(4, 6))
+        for column in ("total_usd", "deposit_usd"):
+            self.table.set_formatter(column, lambda value, _row: fmt_usd(value))
+        self.table.set_formatter("status", lambda value, row: "" if value == "Held" else value)
+        self.table.set_formatter(
+            "owing", lambda value, row: (
+                "" if row["status"] != layaways_service.HELD else fmt_usd(value)
+            )
+        )
+        self.table.set_formatter(
+            "due_date", lambda value, row: value or "�"
+        )
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            footer, text="Collect", width=120, height=36,
+            fg_color=theme.SUCCESS, hover_color=theme.SUCCESS_HOVER,
+            command=self._collect,
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(
+            footer, text="Cancel layaway", width=140, height=36,
+            fg_color=theme.DANGER, hover_color=theme.DANGER_HOVER,
+            command=self._cancel,
+        ).grid(row=0, column=1, padx=(8, 0))
+        ctk.CTkButton(
+            footer, text="Close", width=110, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self.destroy,
+        ).grid(row=0, column=2, padx=(8, 0))
+
+        self.bind("<Escape>", lambda _event: self.destroy())
+        self.after(80, self._grab)
+        self.reload()
+
+    def _grab(self) -> None:
+        if not self.winfo_exists():
+            return
+        try:
+            self.grab_set()
+            self.focus_force()
+        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
+            pass
+
+    def reload(self) -> None:
+        rows = [
+            {**dict(row), "owing": round(row["total_usd"] - row["deposit_usd"], 2)}
+            for row in layaways_service.list_layaways(
+                None if self.show_all.get() else layaways_service.HELD,
+                search=self.search_var.get(),
+            )
+        ]
+        self.table.set_rows(
+            rows,
+            empty_message="Nothing is set aside. Hold a cart on the New Sale screen.",
+        )
+        totals = layaways_service.summary()
+        overdue = f" � {totals['overdue']} past their date" if totals["overdue"] else ""
+        self.summary_label.configure(
+            text=(
+                f"{totals['held']} held � {fmt_usd(totals['value_usd'])} still to come in"
+                + overdue
+            )
+        )
+
+    def _selected(self):
+        layaway_id = self.table.selected_int()
+        return layaways_service.get_layaway(layaway_id) if layaway_id is not None else None
+
+    def _collect(self) -> None:
+        layaway = self._selected()
+        if layaway is None:
+            show_error(self, "Pick a layaway first.", "Nothing selected")
+            return
+        if layaway["status"] != layaways_service.HELD:
+            show_error(
+                self, f"Layaway {layaway['reference']} is {layaway['status'].lower()}.",
+                "Already finished",
+            )
+            return
+        owing = layaways_service.outstanding(layaway["layaway_id"])
+        fields = [
+            {"key": "method", "label": "How the rest is paid", "type": "option",
+             "values": list(config.PAYMENT_METHODS), "value": "Cash"},
+            {"key": "amount", "label": f"Received now (owing: {fmt_usd(owing)})",
+             "type": "number", "value": f"{owing:.2f}"},
+        ]
+
+        collected: list[int] = []
+
+        def submit(values):
+            collected.append(layaways_service.collect(
+                layaway["layaway_id"], self.user.user_id,
+                payment_method=values["method"], amount_paid=values["amount"],
+            ))
+
+        if FormModal(self, f"Collect {layaway['reference']}", fields, submit,
+                     submit_text="Complete the sale").wait_result():
+            self.reload()
+            from app.services import receipts
+
+            path = receipts.generate_receipt(collected[0])
+            from app.ui import receipt_actions
+
+            receipt_actions.open_file(path)
+
+    def _cancel(self) -> None:
+        layaway = self._selected()
+        if layaway is None:
+            show_error(self, "Pick a layaway first.", "Nothing selected")
+            return
+        if layaway["status"] != layaways_service.HELD:
+            show_error(
+                self, f"Layaway {layaway['reference']} is {layaway['status'].lower()}.",
+                "Already finished",
+            )
+            return
+        deposit = layaway["deposit_usd"]
+        message = (
+            f"Cancel {layaway['reference']}?\n\nThe goods go back on the shelf"
+        )
+        if deposit:
+            message += f" and the {fmt_usd(deposit)} deposit is handed back in cash"
+        if not ask_confirm(self, message + ".", "Cancel layaway"):
+            return
+        try:
+            layaways_service.cancel(layaway["layaway_id"], self.user.user_id)
+        except layaways_service.LayawayError as exc:
+            show_error(self, exc, "Could not cancel")
+            return
+        self.reload()

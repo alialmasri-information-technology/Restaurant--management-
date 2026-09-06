@@ -63,15 +63,20 @@ class PosView(ctk.CTkFrame):
         )
         self.parked_button.grid(row=0, column=1)
         ctk.CTkButton(
+            self.header.actions, text="Layaway", width=100, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._hold_layaway,
+        ).grid(row=0, column=2, padx=(8, 0))
+        ctk.CTkButton(
             self.header.actions, text="Gift card", width=100, height=36,
             fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
             command=self._sell_gift_card,
-        ).grid(row=0, column=2, padx=(8, 0))
+        ).grid(row=0, column=3, padx=(8, 0))
         ctk.CTkButton(
             self.header.actions, text="Keys", width=80, height=36,
             fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
             command=lambda: KeysModal(self),
-        ).grid(row=0, column=3, padx=(8, 0))
+        ).grid(row=0, column=4, padx=(8, 0))
 
         self._build_catalogue()
         self._build_cart()
@@ -782,6 +787,54 @@ class PosView(ctk.CTkFrame):
             (c["customer_id"] for c in self._customers if _customer_label(c) == label),
             None,
         )
+
+    def _hold_layaway(self) -> None:
+        """Set the cart aside for a customer paying over time."""
+        if self.cart.is_empty:
+            show_error(
+                self, "Put the goods in the cart first, then hold them.", "Nothing to hold"
+            )
+            return
+        from app.services import layaways as layaways_service
+
+        fields = [
+            {"key": "deposit", "label": "Deposit taken now (USD, 0 for none)",
+             "type": "number", "value": "0"},
+            {"key": "deposit_method", "label": "How the deposit was taken",
+             "type": "option", "values": ["Cash", "Card"], "value": "Cash"},
+            {"key": "due_date", "label": "When they will collect (e.g. 2026-10-01)",
+             "type": "entry"},
+            {"key": "note", "label": "Note", "type": "entry",
+             "placeholder": "Surname, phone, what was agreed…"},
+        ]
+
+        held: list[int] = []
+
+        def submit(values):
+            held.append(layaways_service.hold(
+                self.cart,
+                user_id=self.shell.user.user_id,
+                customer_id=self._selected_customer_id(),
+                deposit=values["deposit"],
+                deposit_method=values["deposit_method"],
+                due_date=values["due_date"],
+                note=values["note"],
+            ))
+
+        if FormModal(self, "Hold as a layaway", fields, submit,
+                     submit_text="Hold the goods").wait_result():
+            layaway = layaways_service.get_layaway(held[0])
+            self.cart.clear()
+            self.cart.note = ""
+            self.discount_var.set("0")
+            self._render_cart()
+            show_info(
+                self,
+                f"Held as {layaway['reference']}. The customer owes "
+                f"{fmt_usd(layaways_service.outstanding(layaway['layaway_id']))} "
+                "on collection.",
+                "Layaway held",
+            )
 
     def _sell_gift_card(self) -> None:
         """Sell a card like any other line: it is activated when the sale lands."""
