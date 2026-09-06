@@ -118,7 +118,10 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" RE4.exe *.exe
-          --title "RE4 $GITHUB_REF_NAME"
-          --generate-notes
+        run: |
+          # Draft first, upload into it, then publish: uploading into a
+          # release created moments ago can 404 while GitHub propagates it,
+          # and a draft is invisible until everything has landed.
+          gh release create "$GITHUB_REF_NAME" --draft --title "RE4 $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" RE4.exe *.exe --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false
