@@ -92,6 +92,19 @@ are a decision, not a side effect. The rules live in Settings → Data safety.
 
 ### Added
 
+**A welcome that knows it is a first meeting.** The first time an
+administrator signs in, RE4 asks the shop's own five questions — name, phone,
+address, the exchange rate, the tax rate — in one dialog, and then never asks
+again. Everything it touches was always editable in Settings; this just means
+a shop does not trade a week under a store name of "RE4 Store" because nobody
+knew where to look.
+
+**A quiet word when there is a new version.** Once a day, away from the till
+thread, RE4 asks its own releases page whether anything newer exists. If so,
+one strip appears at the top of the screen — *Version 2.6.0 is available*,
+with a button to the release notes and one to dismiss it. An offline shop
+gets no banner and no error, which is the correct answer.
+
 **The keyboard, on one card.** Till work is keyboard work, but nobody can
 remember six function keys on their first shift. The New Sale screen has a
 *Keys* button now, and the card it opens lists every shortcut and what it
@@ -112,7 +125,7 @@ executable.
 
 ### Tests
 
-- 491, up from 470.
+- 503, up from 470.
 
 ## [2.4.0] — 2026-09-04
 

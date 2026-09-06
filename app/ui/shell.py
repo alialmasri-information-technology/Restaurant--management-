@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import webbrowser
 
 import customtkinter as ctk
 
 from app import config
-from app.ui import theme
+from app.ui import background, theme
 from app.ui.widgets import ask_confirm
 
 # (key, label, admin_only)
@@ -36,17 +37,62 @@ class AppShell(ctk.CTkFrame):
         self._views: dict[str, ctk.CTkFrame] = {}
         self.current_key: str | None = None
 
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
         self._build_sidebar()
 
         self.content = ctk.CTkFrame(self, fg_color="transparent")
-        self.content.grid(row=0, column=1, sticky="nsew")
+        self.content.grid(row=1, column=1, sticky="nsew")
         self.content.grid_rowconfigure(0, weight=1)
         self.content.grid_columnconfigure(0, weight=1)
 
         self.show("dashboard")
+        self._check_for_update()
+
+    # -- update banner ------------------------------------------------------ #
+
+    def _check_for_update(self) -> None:
+        """Ask once a day whether a newer copy exists; say so quietly if so.
+
+        The question travels on the background worker — the network takes what
+        it takes, and the till must answer the scanner while it waits. An
+        offline shop gets no banner and no error, which is the correct answer.
+        """
+        from app.services import settings as settings_service
+        from app.services import updates
+
+        def job():
+            return updates.check(settings_service)
+
+        background.run(job, self._show_update_banner, parent=self)
+
+    def _show_update_banner(self, found) -> None:
+        if not found:
+            return
+        version, page = found
+
+        banner = ctk.CTkFrame(self, fg_color=theme.WARNING, corner_radius=0, height=40)
+        banner.grid(row=0, column=1, sticky="ew")
+        banner.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            banner,
+            text=f"Version {version} is available.",
+            font=theme.font(12, "bold"), text_color="#1a1a1a", anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=(16, 0), pady=8)
+        ctk.CTkButton(
+            banner, text="See what's new", width=130, height=26,
+            fg_color="#00000000", hover_color=theme.NEUTRAL_HOVER,
+            text_color="#1a1a1a", border_width=1, border_color="#1a1a1a",
+            command=lambda: webbrowser.open(page),
+        ).grid(row=0, column=1, padx=8, pady=6)
+        ctk.CTkButton(
+            banner, text="Dismiss", width=90, height=26,
+            fg_color="#00000000", hover_color=theme.NEUTRAL_HOVER,
+            text_color="#1a1a1a", border_width=1, border_color="#1a1a1a",
+            command=banner.destroy,
+        ).grid(row=0, column=2, padx=(0, 12), pady=6)
 
     # -- chrome ------------------------------------------------------------- #
 

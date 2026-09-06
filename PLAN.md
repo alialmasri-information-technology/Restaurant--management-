@@ -42,9 +42,12 @@ Work proceeds in phases; each one ends with the full test suite and ruff green.
   `%LOCALAPPDATA%\RE4`, wired into `build_executable.bat` and CI~~ — done.
 - ~~Single-instance guard (`app/instance.py`) with a plain-language message
   instead of two copies on one database~~ — done.
-- Remaining: first-run wizard (store name, exchange rate, admin password,
-  shift policy) and an update-check banner pointing at the latest GitHub
-  release, once the repository URL in `pyproject.toml` points somewhere real.
+- ~~First-run walkthrough: an administrator's first sign-in asks the shop's
+  own name, phone, address, exchange rate and tax rate, then never again
+  (`app/ui/onboarding.py`)~~ — done.
+- ~~Update check: once a day, on the background worker, cached in settings;
+  a newer release shows one dismissible strip in the shell, an offline shop
+  gets nothing (`app/services/updates.py`)~~ — done.
 
 ## Phase 4 — Database hardening
 

@@ -17,6 +17,10 @@ APP_NAME = "RE4"
 APP_TITLE = "RE4 — Business & Retail Management"
 APP_VERSION = "2.5.0"
 
+# Where releases are published and looked for. The update check reads this,
+# so a fork that publishes its own releases only has to change it here.
+REPO_SLUG = "alialmasri-information-technology/Restaurant--management-"
+
 IS_FROZEN = getattr(sys, "frozen", False)
 
 
@@ -116,6 +120,7 @@ DEFAULT_SETTINGS = {
     "login_max_attempts": "5",  # consecutive failures before the account locks; 0 = off
     "login_lockout_minutes": "5",  # how long a locked account stays locked
     "idle_lock_minutes": "15",  # lock the screen after this much inactivity; 0 = off
+    "first_run_done": "0",  # the welcome walkthrough has been walked through
 }
 
 

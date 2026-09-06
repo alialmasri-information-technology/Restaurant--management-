@@ -39,8 +39,8 @@ build = [
 re4 = "main:main"
 
 [project.urls]
-Documentation = "https://github.com/your-org/re4#readme"
-Source = "https://github.com/your-org/re4"
+Documentation = "https://github.com/alialmasri-information-technology/Restaurant--management-#readme"
+Source = "https://github.com/alialmasri-information-technology/Restaurant--management-"
 
 [tool.setuptools]
 py-modules = ["main"]

@@ -174,6 +174,16 @@ class RE4App(ctk.CTk):
         self._swap(AppShell(self, user, self.show_login))
         if user.must_change_password:
             self.after(200, self._force_password_change)
+        else:
+            self.after(300, self._maybe_first_run)
+
+    def _maybe_first_run(self) -> None:
+        """A shop's own numbers, asked once, the first time an owner signs in."""
+        if self.user is None:
+            return
+        from app.ui import onboarding
+
+        onboarding.maybe_first_run(self, self.user)
 
     def _force_password_change(self) -> None:
         """A temporary password gets one screen and no way past it."""
@@ -186,6 +196,8 @@ class RE4App(ctk.CTk):
             if refreshed is not None:
                 self.user = refreshed
                 audit.set_actor(refreshed)
+            # The password was theirs; the shop's numbers come next.
+            self.after(200, self._maybe_first_run)
 
         security.ForcedPasswordChange(self, user, done, self.show_login)
 
