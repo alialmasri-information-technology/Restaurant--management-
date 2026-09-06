@@ -15,7 +15,7 @@ from pathlib import Path
 
 APP_NAME = "RE4"
 APP_TITLE = "RE4 — Business & Retail Management"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.5.0"
 
 IS_FROZEN = getattr(sys, "frozen", False)
 
@@ -106,7 +106,11 @@ DEFAULT_SETTINGS = {
     "receipt_width_mm": "80",  # thermal roll width
     "printer_name": "",  # blank means the system default printer
     "backup_on_start": "1",
+    "backup_on_close": "0",  # snapshot the day as the shop locks up
     "backup_keep": "20",
+    "parked_keep_days": "30",  # held sales nobody came back for; 0 = keep for ever
+    "receipt_keep_days": "0",  # printed receipts are proof; 0 = keep for ever
+    "audit_keep_days": "0",  # the audit trail is a record; 0 = keep for ever
     "require_shift": "1",  # a till shift must be open before selling
     "allow_price_override": "1",  # employees may change a price with admin approval
     "login_max_attempts": "5",  # consecutive failures before the account locks; 0 = off

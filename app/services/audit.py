@@ -76,12 +76,9 @@ def list_entries(
     if action and action != "All":
         clauses.append("action = ?")
         params.append(action)
-    if date_from:
-        clauses.append("date(at) >= date(?)")
-        params.append(date_from)
-    if date_to:
-        clauses.append("date(at) <= date(?)")
-        params.append(date_to)
+    date_clauses, date_params = db.date_range_clauses("at", date_from, date_to)
+    clauses += date_clauses
+    params += date_params
     if search and search.strip():
         clauses.append("(username LIKE ? OR entity LIKE ? OR detail LIKE ? OR entity_id LIKE ?)")
         pattern = f"%{search.strip()}%"

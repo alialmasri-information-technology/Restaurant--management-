@@ -214,3 +214,4 @@ re4.db
 re4.db-wal
 re4.db-shm
 receipts/
+backups/

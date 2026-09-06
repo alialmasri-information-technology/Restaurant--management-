@@ -21,6 +21,7 @@ from app.ui.widgets import (
     Modal,
     SectionTitle,
     ask_confirm,
+    debounce,
     show_error,
     show_info,
 )
@@ -58,6 +59,11 @@ class PosView(ctk.CTkFrame):
             command=self._open_parked,
         )
         self.parked_button.grid(row=0, column=1)
+        ctk.CTkButton(
+            self.header.actions, text="Keys", width=80, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=lambda: KeysModal(self),
+        ).grid(row=0, column=2, padx=(8, 0))
 
         self._build_catalogue()
         self._build_cart()
@@ -103,7 +109,7 @@ class PosView(ctk.CTkFrame):
         controls.grid_columnconfigure(0, weight=1)
 
         self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self._reload_products())
+        self.search_var.trace_add("write", debounce(self, 250, self._reload_products))
         self.search_entry = ctk.CTkEntry(
             controls, textvariable=self.search_var, height=36,
             placeholder_text="Search by name or scan a SKU…",
@@ -680,8 +686,8 @@ class PosView(ctk.CTkFrame):
 
     def _render_totals(self) -> None:
         subtotal, discount, tax, total = self._totals()
-        rate = settings_service.exchange_rate()
-        rounding = settings_service.lbp_rounding()
+        rate = getattr(self, "_rate", None) or settings_service.exchange_rate()
+        rounding = getattr(self, "_lbp_rounding", None) or settings_service.lbp_rounding()
 
         self.total_labels["subtotal"].configure(text=fmt_usd(subtotal))
         self.total_labels["discount"].configure(
@@ -784,6 +790,14 @@ class PosView(ctk.CTkFrame):
             values=[WALK_IN] + [_customer_label(c) for c in self._customers]
         )
 
+        # The exchange rate and LBP rounding are read by _render_totals, which
+        # runs on every keystroke in the amount-received box. Reading them from
+        # the database there means a settings query per character typed; the
+        # figures only change on the Settings screen, so they are re-read here,
+        # where the till is refreshed.
+        self._rate = settings_service.exchange_rate()
+        self._lbp_rounding = settings_service.lbp_rounding()
+
         self._reload_products()
         self._render_cart()
         self._refresh_parked_button()
@@ -879,3 +893,53 @@ class ParkedModal(Modal):
         self.result = parked_id
         self.grab_release()
         self.destroy()
+
+class KeysModal(Modal):
+    """The keyboard, on one card, for the person at the till."""
+
+    SHORTCUTS = (
+        ("F2", "Park this sale and start another"),
+        ("F3", "Bring back a parked sale"),
+        ("F4", "Complete the sale"),
+        ("F6", "Change a line's quantity"),
+        ("F7", "Discount one line"),
+        ("F8", "Change a price - ask an administrator"),
+        ("Ctrl+L", "Jump to the search box"),
+        ("Enter", "Add the searched or scanned product"),
+        ("Ctrl+Shift+L", "Lock the screen"),
+        ("Esc", "Close any window like this one"),
+    )
+
+    def __init__(self, parent):
+        super().__init__(parent, "The keyboard", 420, 470)
+        self.grid_columnconfigure(1, weight=1)
+
+        SectionTitle(self, "The keyboard").grid(
+            row=0, column=0, columnspan=2, sticky="ew", padx=18, pady=(18, 10)
+        )
+
+        for row, (key, does) in enumerate(self.SHORTCUTS, start=1):
+            ctk.CTkLabel(
+                self, text=key, font=theme.font(13, "bold"),
+                text_color=theme.PRIMARY, anchor="w", width=130,
+            ).grid(row=row, column=0, sticky="w", padx=(18, 8), pady=3)
+            ctk.CTkLabel(
+                self, text=does, font=theme.font(12), anchor="w",
+                text_color=theme.TEXT,
+            ).grid(row=row, column=1, sticky="w", pady=3)
+
+        ctk.CTkButton(
+            self, text="Close", height=36, width=120, command=self.on_cancel
+        ).grid(row=len(self.SHORTCUTS) + 1, columnspan=2, pady=(14, 16))
+
+        self.bind("<Escape>", lambda _event: self.on_cancel())
+        self.after(80, self._grab)
+
+    def _grab(self) -> None:
+        if not self.winfo_exists():
+            return
+        try:
+            self.grab_set()
+            self.focus_force()
+        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
+            pass

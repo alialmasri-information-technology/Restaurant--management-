@@ -61,6 +61,17 @@ class CreateTests(DatabaseTestCase):
         self.assertIsNotNone(service.run_startup_backup())
         self.assertEqual(len(service.list_backups()), 1)
 
+    def test_the_shutdown_backup_is_off_by_default(self):
+        service.create("startup copy")
+        self.assertIsNone(service.run_shutdown_backup())
+        self.assertEqual(len(service.list_backups()), 1)
+
+    def test_the_shutdown_backup_runs_and_prunes(self):
+        settings_service.set_value("backup_on_close", "1")
+        settings_service.set_value("backup_keep", "1")
+        self.assertIsNotNone(service.run_shutdown_backup())
+        self.assertEqual(len(service.list_backups()), 1)
+
 
 class RestoreTests(DatabaseTestCase):
     def test_restoring_brings_back_the_old_data(self):
@@ -93,6 +104,32 @@ class RestoreTests(DatabaseTestCase):
             sku="S9", name="After restore", price_usd="3.00"
         )
         self.assertEqual(products_service.get_product(product_id)["name"], "After restore")
+
+    def test_a_restored_database_passes_its_integrity_check(self):
+        snapshot = service.create("good")
+        service.restore(snapshot)
+        self.assertEqual(db.integrity_check(), "ok")
+
+    def test_a_restore_can_be_undone_with_its_safety_copy(self):
+        """The drill: restore, regret it, and get back exactly what was there."""
+        snapshot = service.create("good")
+        customers_service.create_customer(name="The thing the restore nearly lost")
+        safety = service.restore(snapshot)
+        # The restore took the shop back to before the customer existed.
+        self.assertEqual(
+            [row["name"] for row in db.query(
+                "SELECT name FROM customers WHERE name LIKE 'The thing%'"
+            )],
+            [],
+        )
+        # Undo the restore with the safety copy.
+        service.restore(safety)
+        self.assertEqual(
+            [row["name"] for row in db.query(
+                "SELECT name FROM customers WHERE name LIKE 'The thing%'"
+            )],
+            ["The thing the restore nearly lost"],
+        )
 
     def test_a_missing_file_is_refused(self):
         with self.assertRaises(service.BackupError):
@@ -135,6 +172,17 @@ class RestoreTests(DatabaseTestCase):
         with self.assertRaises(service.BackupError):
             service.restore(junk)
         self.assertIsNotNone(products_service.get_by_sku("S1"))
+
+
+class CheckpointTests(DatabaseTestCase):
+    def test_checkpointing_shrinks_the_write_ahead_log(self):
+        products_service.create_product(sku="S1", name="Widget", price_usd="10.00")
+        db.checkpoint()
+        wal = self._tmp / "test.db-wal"
+        self.assertFalse(wal.exists() and wal.stat().st_size > 0)
+
+    def test_foreign_key_problems_are_none_on_a_healthy_database(self):
+        self.assertEqual(db.foreign_key_problems(), [])
 
 
 if __name__ == "__main__":

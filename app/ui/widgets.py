@@ -26,6 +26,29 @@ def ask_confirm(parent, message: str, title: str = "Just checking") -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Typing helpers
+# --------------------------------------------------------------------------- #
+
+def debounce(widget, milliseconds: int, fn):
+    """Wrap ``fn`` so it runs once, ``milliseconds`` after typing goes quiet.
+
+    A search box that re-queries the database on every keystroke does the
+    query's work one letter at a time: type "stapler" and the catalogue is
+    searched six times, five of them for prefixes nobody wanted. Waiting for a
+    quiet moment costs nothing a person can feel and runs the query once.
+    """
+    after_id = None
+
+    def schedule(*_args) -> None:
+        nonlocal after_id
+        if after_id is not None:
+            widget.after_cancel(after_id)
+        after_id = widget.after(milliseconds, fn)
+
+    return schedule
+
+
+# --------------------------------------------------------------------------- #
 # Layout pieces
 # --------------------------------------------------------------------------- #
 

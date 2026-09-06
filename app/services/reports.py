@@ -66,14 +66,7 @@ def change_ratio(current, previous) -> float | None:
 
 
 def _range(date_from: str | None, date_to: str | None, column: str = "s.sale_time"):
-    clauses, params = [], []
-    if date_from:
-        clauses.append(f"date({column}) >= date(?)")
-        params.append(date_from)
-    if date_to:
-        clauses.append(f"date({column}) <= date(?)")
-        params.append(date_to)
-    return clauses, params
+    return db.date_range_clauses(column, date_from, date_to)
 
 
 def _where(clauses) -> str:
@@ -162,13 +155,13 @@ def daily_series(date_from: str, date_to: str) -> list[sqlite3.Row]:
             SELECT date(sale_time) AS day, COUNT(*) AS sale_count,
                    COALESCE(SUM(total_usd), 0) AS revenue
             FROM sales
-            WHERE date(sale_time) BETWEEN date(?) AND date(?)
+            WHERE sale_time >= date(?) AND sale_time < date(?, '+1 day')
             GROUP BY date(sale_time)
             UNION ALL
             SELECT date(created_at) AS day, 0 AS sale_count,
                    -COALESCE(SUM(total_usd), 0) AS revenue
             FROM returns
-            WHERE date(created_at) BETWEEN date(?) AND date(?)
+            WHERE created_at >= date(?) AND created_at < date(?, '+1 day')
             GROUP BY date(created_at)
         )
         GROUP BY day
@@ -334,7 +327,7 @@ def dead_stock(days: int = 60) -> list[sqlite3.Row]:
             FROM products p
             WHERE p.is_active = 1 AND p.stock_qty > 0
         )
-        WHERE last_sold IS NULL OR date(last_sold) < date(?)
+        WHERE last_sold IS NULL OR last_sold < date(?)
         ORDER BY tied_up DESC
         LIMIT 50
         """,

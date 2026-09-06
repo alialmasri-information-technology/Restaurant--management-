@@ -12,6 +12,7 @@ from tkinter import filedialog
 from app import printing, receipts
 from app.services import sales as sales_service
 from app.services import settings as settings_service
+from app.ui import background
 from app.ui.widgets import ask_confirm, show_error, show_info
 
 
@@ -30,20 +31,28 @@ def open_file(path: Path) -> None:
         webbrowser.open(path.as_uri())
 
 
-def send_to_printer(parent, path: Path, quiet: bool = False) -> bool:
-    """Print a generated file, reporting what happened."""
-    try:
-        status = printing.print_file(path, settings_service.printer_name())
-    except printing.PrintError as exc:
+def send_to_printer(parent, path: Path, quiet: bool = False) -> None:
+    """Print a generated file, reporting what happened.
+
+    Handed to the background worker: a printer that is asleep, offline or
+    prompting for attention can hold the conversation open for the better part
+    of a minute, and the till must keep answering while it happens.
+    """
+    def job():
+        return printing.print_file(path, settings_service.printer_name())
+
+    def done(status: str) -> None:
+        if not quiet:
+            show_info(parent, status, "Sent to printer")
+
+    def failed(exc: Exception) -> None:
         show_error(
             parent,
             f"{exc}\n\nThe document is saved at:\n{path}",
             "Could not print",
         )
-        return False
-    if not quiet:
-        show_info(parent, status, "Sent to printer")
-    return True
+
+    background.run(job, done, failed, parent=parent)
 
 
 def _produce(parent, make, failure: str):

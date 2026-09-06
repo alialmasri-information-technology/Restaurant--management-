@@ -9,32 +9,39 @@ from app import db
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-#: What the customer owes, as a correlated subquery. Named once because it is
-#: needed both as a selected column and as a filter — and a HAVING clause cannot
-#: stand in for the latter, since nothing here is grouped.
+#: What the customer owes, as a correlated subquery — needed as a filter, which
+#: an aggregate JOIN cannot be, since nothing here is grouped.
 BALANCE = """
     COALESCE((SELECT SUM(l.amount_usd) FROM customer_ledger l
                WHERE l.customer_id = c.customer_id), 0)
 """
 
+_SELECT = """
+    SELECT c.*,
+           COALESCE(sp.purchase_count, 0) AS purchase_count,
+           COALESCE(sp.total_spent_usd, 0) AS total_spent_usd,
+           sp.last_purchase,
+           COALESCE(led.balance_usd, 0) AS balance_usd
+    FROM customers c
+    LEFT JOIN (
+        SELECT s.customer_id,
+               COUNT(*) AS purchase_count,
+               SUM(s.total_usd) AS total_spent_usd,
+               MAX(s.sale_time) AS last_purchase
+        FROM sales s
+        WHERE s.status = 'Completed'
+        GROUP BY s.customer_id
+    ) sp ON sp.customer_id = c.customer_id
+    LEFT JOIN (
+        SELECT l.customer_id, SUM(l.amount_usd) AS balance_usd
+        FROM customer_ledger l
+        GROUP BY l.customer_id
+    ) led ON led.customer_id = c.customer_id
+"""
+
 
 class CustomerError(Exception):
     """Raised for user-facing customer failures."""
-
-
-_SELECT = """
-    SELECT c.*,
-           (SELECT COUNT(*) FROM sales s
-             WHERE s.customer_id = c.customer_id AND s.status = 'Completed')
-               AS purchase_count,
-           COALESCE((SELECT SUM(s.total_usd) FROM sales s
-             WHERE s.customer_id = c.customer_id AND s.status = 'Completed'), 0)
-               AS total_spent_usd,
-           (SELECT MAX(s.sale_time) FROM sales s
-             WHERE s.customer_id = c.customer_id) AS last_purchase,
-           {BALANCE} AS balance_usd
-    FROM customers c
-""".replace("{BALANCE}", BALANCE)
 
 
 def list_customers(search: str = "", *, owing_only: bool = False) -> list[sqlite3.Row]:

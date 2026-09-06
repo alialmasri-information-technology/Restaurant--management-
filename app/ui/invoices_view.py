@@ -20,6 +20,7 @@ from app.ui.widgets import (
     Modal,
     SectionTitle,
     ask_confirm,
+    debounce,
     show_error,
 )
 
@@ -53,7 +54,7 @@ class InvoicesView(ctk.CTkFrame):
         bar.grid_columnconfigure(0, weight=1)
 
         self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self.refresh())
+        self.search_var.trace_add("write", debounce(self, 250, self.refresh))
         ctk.CTkEntry(
             bar, textvariable=self.search_var, height=36,
             placeholder_text="Search by invoice number, customer or cashier…",

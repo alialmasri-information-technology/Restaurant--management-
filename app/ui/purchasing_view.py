@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
-from app import config
+from app import config, db
 from app.money import D, fmt_usd, parse_amount, parse_int
 from app.services import products as products_service
 from app.services import purchases as purchases_service
@@ -17,6 +17,7 @@ from app.ui.widgets import (
     FormModal,
     Modal,
     ask_confirm,
+    debounce,
     show_error,
     show_info,
 )
@@ -102,7 +103,7 @@ class PurchasingView(ctk.CTkFrame):
             bar, placeholder_text="Search orders by number, supplier or note", height=36
         )
         self.order_search.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        self.order_search.bind("<KeyRelease>", lambda _event: self.refresh_orders())
+        self.order_search.bind("<KeyRelease>", debounce(self, 250, self.refresh_orders))
 
         self.status_filter = ctk.CTkOptionMenu(
             bar, values=list(STATUS_FILTERS), width=160, height=36,
@@ -225,7 +226,7 @@ class PurchasingView(ctk.CTkFrame):
             bar, placeholder_text="Search suppliers", height=36
         )
         self.supplier_search.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        self.supplier_search.bind("<KeyRelease>", lambda _event: self.refresh_suppliers())
+        self.supplier_search.bind("<KeyRelease>", debounce(self, 250, self.refresh_suppliers))
 
         self.show_archived = ctk.CTkCheckBox(
             bar, text="Show archived", command=self.refresh_suppliers
@@ -400,20 +401,24 @@ class PurchasingView(ctk.CTkFrame):
         ):
             return
 
+        # All the drafts go up in one transaction: a failure part-way must not
+        # leave half the suppliers with an order raised and half without.
         created = 0
-        for supplier_id, items in by_supplier.items():
-            try:
-                purchases_service.create_po(
-                    supplier_id=supplier_id, user_id=self.user.user_id,
-                    lines=[
-                        (row["product_id"], row["suggested_qty"], row["cost_usd"])
-                        for row in items
-                    ],
-                    note="Raised from reorder suggestions",
-                )
-                created += 1
-            except purchases_service.PurchaseError as exc:
-                show_error(self, exc, "Could not raise an order")
+        try:
+            with db.transaction():
+                for supplier_id, items in by_supplier.items():
+                    purchases_service.create_po(
+                        supplier_id=supplier_id, user_id=self.user.user_id,
+                        lines=[
+                            (row["product_id"], row["suggested_qty"], row["cost_usd"])
+                            for row in items
+                        ],
+                        note="Raised from reorder suggestions",
+                    )
+                    created += 1
+        except purchases_service.PurchaseError as exc:
+            show_error(self, exc, "Could not raise an order")
+            return
         if created:
             self.refresh()
             self.tabs.set("Orders")

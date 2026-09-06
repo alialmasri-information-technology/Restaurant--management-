@@ -5,6 +5,115 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [2.5.0] — 2026-09-06
+
+No schema change. This release is about speed that lasts: the queries that were
+cheap on a young database stay cheap on one the shop has traded on for years.
+
+### Changed
+
+**Dates are compared, not unwrapped.** Every date filter in the app wrapped the
+column in `date()` — `date(sale_time) >= date(?)` — which asks SQLite to read
+and parse every row before it can compare, and threw away the index on that
+column. The day report, the ledger, the audit trail, the invoices list and every
+chart on the dashboard now compare the raw timestamp instead, so the index does
+the work. On a database with years of trading in it this is the difference
+between a scan and a lookup, on every one of those screens.
+
+**Nine new indexes on the columns the app actually filters by.** X/Z reports sum
+the customer ledger per drawer; the CSV importer and the product-delete guard
+probe sale and purchase lines by product; the suppliers screen counts products
+per supplier; the returns list walks a day's returns. Each of those was a
+full-table scan, growing for as long as the shop trades. Existing databases get
+the indexes on their next start-up, without a migration.
+
+**Printing, backups and the database check happen away from the till.** A
+printer that is asleep can hold the conversation open for the better part of a
+minute, PowerShell's list of installed printers nearly as long, and a backup of
+a database grown over years is a file copy — all of which used to leave the
+window grey and the till dead while they ran. They now run on a background
+worker; the cursor reads as busy, and the shop keeps answering the scanner.
+Restoring a backup deliberately stays on the spot: it must close and reopen the
+calling thread's database connection, and the cursor says the window is busy
+for the second it takes.
+
+**One copy of the register per shop.** Starting a second copy of RE4 against
+the same database was a corruption lottery — two tills selling the last unit,
+one restore running under the other's sale. A second launch now says so and
+stops. Windows is told with a named mutex, which the operating system releases
+even after an ugly exit; elsewhere an advisory lock file beside the database
+does the same job.
+
+**The database tidies up after itself.** The write-ahead log is folded back
+into the file when the shop closes — and after a housekeeping purge — instead
+of growing for as long as the till stays up. Closing can also take a backup
+first (Settings → Data safety, off by default), so the day is snapshotted
+before anyone goes home. `--check` now says what the big tables hold, whether
+any row points at data that is not there, and how much is still pending in the
+write-ahead log.
+
+**The customer ledger and the audit trail are tidied.** Held sales nobody came
+back for are discarded after 30 days, stale sign-in throttle rows after 30, and
+— only if an administrator asks for it in Settings — printed receipts and audit
+lines older than a stated number of days. The defaults delete nothing; records
+are a decision, not a side effect. The rules live in Settings → Data safety.
+
+### Performance
+
+- The CSV importer reads the catalogue once, not once per row: picking a
+  900-line supplier file no longer runs 900 queries on the UI thread.
+- A stock take reads its worksheet once and patches it in place. Every scan
+  used to re-query the entire sheet and rebuild the whole table; on a full
+  count of a thousand lines, one barcode meant a thousand-row join per beep.
+- Search boxes wait for a quiet moment before querying, so typing "stapler"
+  searches the catalogue once instead of six times. The same grace applies to
+  the invoice, customer, supplier, purchasing and audit searches.
+- The till reads the exchange rate and LBP rounding once per refresh, not once
+  per character typed into the amount-received box.
+- Customer, supplier and invoice listings answer their per-row counts and sums
+  with one grouped pass over the child tables instead of a sub-query per row —
+  a 500-invoice search used to mean 1,500 of them per keystroke.
+
+### Fixed
+
+- Two backups written in the same second shared a filename, and the second
+  silently overwrote the first. A restore writes its safety copy moments
+  after a start-up backup, so this happened in practice — the restore drill
+  that found it is now a permanent test.
+- The sign-in screen checked the bootstrap password by *signing in*: two
+  PBKDF2 runs the moment the app opened, a *Signed in* line in the audit trail
+  that no person wrote, and a last sign-in time from before anyone touched the
+  keyboard. It now checks the stored hash quietly.
+- Unlocking several accounts committed one account at a time; a failure
+  halfway left the rest still locked. All of it is one commit now.
+- Raising draft orders from reorder suggestions created one transaction per
+  supplier, so a failure part-way left half the suppliers with an order and
+  half without. The set is raised all-or-nothing.
+
+### Added
+
+**The keyboard, on one card.** Till work is keyboard work, but nobody can
+remember six function keys on their first shift. The New Sale screen has a
+*Keys* button now, and the card it opens lists every shortcut and what it
+does — parking a sale, bringing one back, completing it, changing a quantity,
+discounting a line, changing a price, and locking the screen.
+
+**Everything leaves in a spreadsheet.** Sales could already be exported from
+Reports and the catalogue from Products; Customers and the audit log can now
+be exported too — the audit export follows whatever search and action filter
+is on screen, so a question about one person's sign-in failures is one file.
+
+**An installer for Windows.** `installer.iss` builds a real setup program:
+RE4 goes in Program Files, a shortcut goes on the desktop and the Start menu,
+and the shop's data — the database, receipts, backups — lives in
+`%LOCALAPPDATA%\RE4` where it can be backed up and survives an uninstall of
+the application. CI now builds and uploads the installer alongside the bare
+executable.
+
+### Tests
+
+- 491, up from 470.
+
 ## [2.4.0] — 2026-09-04
 
 No schema change. This release is about how the application talks.

@@ -22,6 +22,7 @@ from app.ui.widgets import (
     SectionTitle,
     StatCard,
     ask_confirm,
+    debounce,
     show_error,
     show_info,
 )
@@ -35,6 +36,7 @@ class StockTakeView(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.shell = shell
         self.count = None
+        self._sheet: list[dict] = []
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -110,7 +112,7 @@ class StockTakeView(ctk.CTkFrame):
             placeholder_text="Filter the sheet by name or SKU",
         )
         search.grid(row=0, column=0, padx=(0, 8))
-        search.bind("<KeyRelease>", lambda _event: self._render_lines())
+        search.bind("<KeyRelease>", debounce(self, 250, self._render_lines))
 
         self.filter_var = ctk.StringVar(value=FILTERS[0])
         ctk.CTkOptionMenu(
@@ -186,6 +188,7 @@ class StockTakeView(ctk.CTkFrame):
                 "No count is open. Start one to freeze a worksheet of what the "
                 "system thinks is on the shelves."
             )
+            self._sheet = []
             for card in (
                 self.card_progress, self.card_short, self.card_over, self.card_value
             ):
@@ -199,9 +202,23 @@ class StockTakeView(ctk.CTkFrame):
             f"{self.count['reference']}   ·   {self.count['scope']}   ·   opened "
             f"{self.count['opened_at']} by {self.count['opened_by_name'] or 'unknown'}"
         )
+        self._load_sheet()
         self._render_lines()
         self._render_stats()
         self.scan_entry.focus_set()
+
+    def _load_sheet(self) -> None:
+        """Read the whole worksheet once, as plain rows the view can update.
+
+        Every scan, keystroke in the filter box and recorded count used to
+        re-query the entire sheet — on a full count of a thousand lines, one
+        barcode meant a thousand-row join plus a thousand-row rebuild of the
+        table, six times a minute. The sheet only changes through this screen,
+        so it is read once and patched in place.
+        """
+        self._sheet: list[dict] = [
+            dict(row) for row in stocktake_service.list_items(self.count["stock_take_id"])
+        ]
 
     def _render_stats(self) -> None:
         totals = stocktake_service.summary(self.count["stock_take_id"])
@@ -226,13 +243,18 @@ class StockTakeView(ctk.CTkFrame):
     def _render_lines(self) -> None:
         if self.count is None:
             return
+        search = self.search_var.get().strip().lower()
         choice = self.filter_var.get()
-        rows = stocktake_service.list_items(
-            self.count["stock_take_id"],
-            search=self.search_var.get(),
-            only_uncounted=(choice == FILTERS[1]),
-            only_variances=(choice == FILTERS[2]),
-        )
+        rows = [
+            line for line in self._sheet
+            if (not search
+                or search in line["name_at_count"].lower()
+                or search in line["sku_at_count"].lower())
+            and (choice != FILTERS[1] or line["counted_qty"] is None)
+            and (choice != FILTERS[2]
+                 or (line["counted_qty"] is not None
+                     and line["counted_qty"] != line["expected_qty"]))
+        ]
         self.table.set_rows(
             rows,
             tag_func=_line_tag,
@@ -290,12 +312,14 @@ class StockTakeView(ctk.CTkFrame):
             self.scan_var.set("")
             return
 
-        line = next(
-            (row for row in stocktake_service.list_items(self.count["stock_take_id"])
-             if row["product_id"] == product["product_id"]),
-            None,
-        )
-        counted = line["counted_qty"] if line else 1
+        line = self._find_line(product["product_id"])
+        # A scan counts one more than the sheet said a moment ago; a line that
+        # had not been counted yet starts from zero, as add_to_count does.
+        counted = (line["counted_qty"] or 0) + 1 if line else 1
+        if line is not None:
+            line["counted_qty"] = counted
+            line["variance_qty"] = counted - line["expected_qty"]
+            line["variance_usd"] = line["variance_qty"] * line["cost_usd"]
         self.scan_feedback.configure(
             text=f"{product['name']} — counted {counted}", text_color=theme.SUCCESS
         )
@@ -304,16 +328,20 @@ class StockTakeView(ctk.CTkFrame):
         self._render_stats()
         self.scan_entry.focus_set()
 
+    def _find_line(self, product_id):
+        return next(
+            (line for line in self._sheet if line["product_id"] == product_id), None
+        )
+
     def _selected_line(self):
         product_id = self.table.selected_int()
         if product_id is None or self.count is None:
             show_error(self, "Pick a line on the sheet first.", "Nothing selected")
             return None
-        return next(
-            (row for row in stocktake_service.list_items(self.count["stock_take_id"])
-             if row["product_id"] == product_id),
-            None,
-        )
+        line = self._find_line(product_id)
+        if line is None:
+            show_error(self, "That line is no longer on the sheet.", "Nothing selected")
+        return line
 
     def _enter_count(self) -> None:
         line = self._selected_line()
@@ -330,21 +358,33 @@ class StockTakeView(ctk.CTkFrame):
                      "is applied."},
         ]
 
+        recorded: list[int] = []
+
         def submit(values):
-            stocktake_service.record_count(
+            recorded.append(stocktake_service.record_count(
                 self.count["stock_take_id"], line["product_id"], values["counted"]
-            )
+            ))
 
         if FormModal(self, "Record a count", fields, submit,
                      submit_text="Record").wait_result():
+            self._patch_line(line, recorded[0])
             self._render_lines()
             self._render_stats()
+
+    def _patch_line(self, line: dict, counted: int) -> None:
+        """Fold a written count back into the cached sheet."""
+        line["counted_qty"] = counted
+        line["variance_qty"] = counted - line["expected_qty"]
+        line["variance_usd"] = line["variance_qty"] * line["cost_usd"]
 
     def _clear_line(self) -> None:
         line = self._selected_line()
         if line is None:
             return
         stocktake_service.clear_line(self.count["stock_take_id"], line["product_id"])
+        line["counted_qty"] = None
+        line["variance_qty"] = None
+        line["variance_usd"] = None
         self._render_lines()
         self._render_stats()
 
@@ -362,6 +402,8 @@ class StockTakeView(ctk.CTkFrame):
         ):
             return
         stocktake_service.count_remaining_as_expected(self.count["stock_take_id"])
+        # This touches every uncounted line at once; the sheet is re-read.
+        self._load_sheet()
         self._render_lines()
         self._render_stats()
 

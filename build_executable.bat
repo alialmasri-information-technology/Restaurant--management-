@@ -30,6 +30,11 @@ echo Building RE4.exe ...
 pyinstaller --noconfirm --clean RE4.spec || goto :failed
 
 echo.
+echo Building the installer, if Inno Setup is installed...
+where iscc >nul 2>&1
+if not errorlevel 1 iscc installer.iss
+
+echo.
 echo ===================================================
 echo  Build complete: dist\RE4.exe
 echo ===================================================
@@ -37,6 +42,10 @@ echo.
 echo Copy dist\RE4.exe anywhere you like. On first run it creates
 echo re4.db and a receipts folder beside itself, so put it in a
 echo folder you can write to (not Program Files).
+echo.
+echo For a shop that would rather click an installer, run
+echo installer.iss with Inno Setup: it installs to Program Files
+echo and keeps the data in %LOCALAPPDATA%\RE4.
 echo.
 echo First sign-in:  admin / admin123
 echo RE4 will ask you to choose a real password straight away.

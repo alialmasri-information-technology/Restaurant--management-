@@ -31,7 +31,19 @@ def create(label: str = "") -> Path:
     """Snapshot the live database. Returns the path written."""
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     tag = f"-{_safe(label)}" if label else ""
-    target = backups_dir() / f"{PREFIX}{stamp}{tag}{SUFFIX}"
+    # Two snapshots in the same second must not share a filename: the second
+    # would silently overwrite the first, which is exactly the kind of loss a
+    # backup exists to prevent. A restore writes its safety copy moments after
+    # a startup backup, so this happens in practice, not in theory.
+    counter = 1
+    while True:
+        target = backups_dir() / (
+            f"{PREFIX}{stamp}{tag}{SUFFIX}" if counter == 1
+            else f"{PREFIX}{stamp}-{counter}{tag}{SUFFIX}"
+        )
+        if not target.exists():
+            break
+        counter += 1
 
     source = db.get_connection()
     try:
@@ -91,6 +103,21 @@ def run_startup_backup() -> Path | None:
         return path
     except Exception:  # noqa: BLE001 - a failed backup must not stop the shop opening
         logs.exception("Startup backup failed")
+        return None
+
+
+def run_shutdown_backup() -> Path | None:
+    """Called once at closing when the setting is on. Never fatal."""
+    from app.services import settings as settings_service
+
+    try:
+        if settings_service.get("backup_on_close", "0") != "1":
+            return None
+        path = create("shutdown")
+        prune(int(settings_service.get("backup_keep", "20") or 20))
+        return path
+    except Exception:  # noqa: BLE001 - a failed backup must not hold the door locked
+        logs.exception("Shutdown backup failed")
         return None
 
 

@@ -13,6 +13,7 @@ nothing there and catches the regression on a developer's machine.
 
 from __future__ import annotations
 
+import time
 import unittest
 
 from app import config
@@ -429,3 +430,51 @@ class BriefingSmokeTests(DatabaseTestCase):
                     child.invoke()
                     self.root.update_idletasks()
                     self.assertIn(shell.current_key, shell.nav_buttons)
+
+
+class DebounceTests(DatabaseTestCase):
+    """A search box must query once, after the typing stops � not per letter."""
+
+    opens_shift = False
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(self._destroy_root)
+
+    def _destroy_root(self) -> None:
+        _tear_down(self.root)
+
+    def _settle(self, condition) -> bool:
+        """Pump the event loop until the deferred call runs, or fail trying."""
+        deadline = time.monotonic() + 5
+        while not condition() and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.005)
+        return condition()
+
+    def test_three_keystrokes_run_the_query_once(self):
+        from app.ui import widgets
+
+        calls: list[int] = []
+        keystroke = widgets.debounce(self.root, 40, lambda: calls.append(1))
+        keystroke()
+        keystroke()
+        keystroke()
+        self.assertEqual(calls, [])
+        self.assertTrue(self._settle(lambda: bool(calls)))
+        self.assertEqual(calls, [1])
+
+    def test_typing_after_a_pause_runs_the_query_again(self):
+        from app.ui import widgets
+
+        calls: list[int] = []
+        keystroke = widgets.debounce(self.root, 40, lambda: calls.append(1))
+        keystroke()
+        self.assertTrue(self._settle(lambda: bool(calls)))
+        self.assertEqual(len(calls), 1)
+
+        keystroke()
+        self.assertTrue(self._settle(lambda: len(calls) > 1))
+        self.assertEqual(len(calls), 2)

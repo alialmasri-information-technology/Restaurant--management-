@@ -23,6 +23,7 @@ from app.ui.widgets import (
     Modal,
     SectionTitle,
     ask_confirm,
+    debounce,
     show_error,
     show_info,
 )
@@ -72,7 +73,7 @@ class ProductsView(ctk.CTkFrame):
         bar.grid_columnconfigure(0, weight=1)
 
         self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self.reload())
+        self.search_var.trace_add("write", debounce(self, 250, self.reload))
         ctk.CTkEntry(
             bar, textvariable=self.search_var, height=36,
             placeholder_text="Search products by name, SKU or description…",

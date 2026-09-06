@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import sys
 import time
+import tkinter as tk
 import traceback
 from tkinter import messagebox
 
 import customtkinter as ctk
 
-from app import auth, config, db, logs
-from app.services import audit, backups
-from app.ui import security, theme
+from app import auth, config, db, instance, logs
+from app.services import audit, backups, housekeeping
+from app.ui import background, security, theme
 from app.ui.login import LoginView
 from app.ui.shell import AppShell
 
@@ -38,6 +39,7 @@ class RE4App(ctk.CTk):
 
         self._start_database()
         self._start_backup()
+        background.start(self)
         self.show_login()
 
         self.protocol("WM_DELETE_WINDOW", self.quit_app)
@@ -71,6 +73,12 @@ class RE4App(ctk.CTk):
             )
             self.destroy()
             sys.exit(1)
+        # Tidying before anybody signs in: it touches nothing a person is
+        # looking at, and a slip in it must never keep the shop from opening.
+        try:
+            housekeeping.tidy()
+        except Exception:  # noqa: BLE001
+            logs.exception("Housekeeping failed")
 
     def _start_backup(self) -> None:
         """Snapshot the database at launch. Never fatal - the shop must open."""
@@ -185,6 +193,12 @@ class RE4App(ctk.CTk):
         self._clear_lock()
         if self.user is not None:
             audit.record("Signed out", "user", self.user.user_id)
+        # A snapshot of the day as the shop locks up, taken while the
+        # connection can still see a consistent picture. Never fatal.
+        path = backups.run_shutdown_backup()
+        if path is not None:
+            logs.info("Shutdown backup: %s", path.name)
+        db.checkpoint()
         logs.info("%s closing", config.APP_NAME)
         db.close_connection()
         self.destroy()
@@ -192,8 +206,28 @@ class RE4App(ctk.CTk):
 
 def run(seed_demo: bool = False) -> None:
     logs.setup()
+    if not instance.acquire():
+        _say_already_running()
+        return
     theme.apply_appearance("System")
     app = RE4App()
     if seed_demo:
         db.seed_demo_data()
     app.mainloop()
+    instance.release()
+
+
+def _say_already_running() -> None:
+    """A frozen, windowed build has no console; the message needs a window."""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            config.APP_NAME,
+            f"{config.APP_NAME} is already running on this computer.\n\n"
+            "Two copies must not work the same till and the same database at "
+            "once. Use the copy that is already open.",
+        )
+        root.destroy()
+    except Exception:  # noqa: BLE001 - say it however we can, then leave
+        print(f"{config.APP_NAME} is already running.")

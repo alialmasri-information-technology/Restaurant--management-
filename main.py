@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -109,8 +110,11 @@ def _unlock(username: str) -> int:
         if not locked:
             print("No accounts are locked.")
             return 0
-        for row in locked:
-            auth.clear_lockout(row["username"])
+        from app import db
+
+        with db.transaction():
+            for row in locked:
+                auth.clear_lockout(row["username"])
         print(f"Unlocked: {', '.join(row['username'] for row in locked)}")
         return 0
 
@@ -138,6 +142,9 @@ def _check() -> int:
         ("Sales", "SELECT COUNT(*) FROM sales"),
         ("Customers", "SELECT COUNT(*) FROM customers"),
         ("Users", "SELECT COUNT(*) FROM users WHERE is_active = 1"),
+        ("Ledger entries", "SELECT COUNT(*) FROM customer_ledger"),
+        ("Audit lines", "SELECT COUNT(*) FROM audit_log"),
+        ("Parked sales", "SELECT COUNT(*) FROM parked_sales"),
         ("Open till shifts", "SELECT COUNT(*) FROM shifts WHERE status = 'Open'"),
         ("Open stock takes", "SELECT COUNT(*) FROM stock_takes WHERE status = 'Open'"),
     )
@@ -152,6 +159,21 @@ def _check() -> int:
     if owed:
         debtors = len(accounts.outstanding())
         print(f"  {'Owed on account:':<20}{fmt_usd(owed)} from {debtors} customer(s)")
+
+    # A foreign key row pointing at nothing should not be possible while the
+    # app enforces its own rules — which is exactly why it is worth asking.
+    broken = db.foreign_key_problems()
+    if broken:
+        print()
+        print(f"  Broken references: {len(broken)} row(s) point at missing data.")
+        for row in broken[:5]:
+            print(f"    {row['table']}: rowid {row['rowid']} -> {row['parent']}")
+
+    wal = Path(str(db.database_path()) + "-wal")
+    if wal.exists() and wal.stat().st_size > 0:
+        print()
+        print(f"  Write-ahead log: {wal.stat().st_size // 1024} kB pending. "
+              "It is folded back when the app closes.")
 
     locked = db.query(
         "SELECT username FROM login_throttle WHERE locked_until IS NOT NULL "

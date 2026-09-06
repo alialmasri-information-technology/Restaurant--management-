@@ -98,11 +98,37 @@ def backup_on_start() -> bool:
     return _flag("backup_on_start")
 
 
+def backup_on_close() -> bool:
+    return _flag("backup_on_close")
+
+
 def backup_keep() -> int:
     try:
         return max(1, int(_decimal("backup_keep", config.DEFAULT_SETTINGS["backup_keep"])))
     except Exception:  # noqa: BLE001
         return 20
+
+
+def parked_keep_days() -> int:
+    """Held sales older than this are tidied at start-up; 0 keeps them all."""
+    return _keep_days("parked_keep_days")
+
+
+def receipt_keep_days() -> int:
+    """Printed receipts older than this are tidied at start-up; 0 keeps them."""
+    return _keep_days("receipt_keep_days")
+
+
+def audit_keep_days() -> int:
+    """Audit lines older than this are tidied at start-up; 0 keeps them all."""
+    return _keep_days("audit_keep_days")
+
+
+def _keep_days(key: str) -> int:
+    try:
+        return max(0, int(_decimal(key, config.DEFAULT_SETTINGS.get(key, "0"))))
+    except Exception:  # noqa: BLE001 - a bad setting must not stop start-up
+        return 0
 
 
 def require_shift() -> bool:

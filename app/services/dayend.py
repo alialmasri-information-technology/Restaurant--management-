@@ -61,10 +61,10 @@ def shifts_for(date: str) -> list[dict]:
         FROM shifts s
         LEFT JOIN users o ON o.user_id = s.opened_by
         LEFT JOIN users c ON c.user_id = s.closed_by
-        WHERE date(s.opened_at) = date(?)
+        WHERE s.opened_at >= date(?) AND s.opened_at < date(?, '+1 day')
         ORDER BY s.shift_id
         """,
-        (date,),
+        (date, date),
     )
     out = []
     for row in rows:
@@ -95,9 +95,9 @@ def account_movement(date: str) -> dict:
                COALESCE(SUM(CASE WHEN kind = 'Adjustment' THEN amount_usd ELSE 0 END), 0)
                    AS adjusted
         FROM customer_ledger
-        WHERE date(at) = date(?)
+        WHERE at >= date(?) AND at < date(?, '+1 day')
         """,
-        (date,),
+        (date, date),
     )
     movement = dict(row) if row else {}
     # The receivable as it stood at the end of that day, which is not today's
@@ -107,7 +107,7 @@ def account_movement(date: str) -> dict:
         SELECT COALESCE(SUM(balance), 0) FROM (
             SELECT SUM(amount_usd) AS balance
             FROM customer_ledger
-            WHERE date(at) <= date(?)
+            WHERE at < date(?, '+1 day')
             GROUP BY customer_id
             HAVING SUM(amount_usd) > 0.005
         )
@@ -125,10 +125,10 @@ def stock_takes_for(date: str) -> list[dict]:
         SELECT t.*, u.username AS applied_by_name
         FROM stock_takes t
         LEFT JOIN users u ON u.user_id = t.closed_by
-        WHERE t.status = 'Applied' AND date(t.closed_at) = date(?)
+        WHERE t.status = 'Applied' AND t.closed_at >= date(?) AND t.closed_at < date(?, '+1 day')
         ORDER BY t.stock_take_id
         """,
-        (date,),
+        (date, date),
     )
     out = []
     for row in rows:

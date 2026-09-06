@@ -254,13 +254,7 @@ def list_returns(
     date_from: str | None = None, date_to: str | None = None,
     search: str = "", limit: int = 300,
 ) -> list[sqlite3.Row]:
-    clauses, params = [], []
-    if date_from:
-        clauses.append("date(r.created_at) >= date(?)")
-        params.append(date_from)
-    if date_to:
-        clauses.append("date(r.created_at) <= date(?)")
-        params.append(date_to)
+    clauses, params = db.date_range_clauses("r.created_at", date_from, date_to)
     if search and search.strip():
         clauses.append("(r.return_no LIKE ? OR s.invoice_no LIKE ? OR r.reason LIKE ?)")
         pattern = f"%{search.strip()}%"

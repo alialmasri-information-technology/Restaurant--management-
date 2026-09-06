@@ -445,18 +445,31 @@ def refund_sale(sale_id: int, user_id: int, reason: str = "") -> None:
 # Reads
 # --------------------------------------------------------------------------- #
 
+# Aggregates are pre-joined rather than correlated per row: a search that
+# returns 500 invoices used to run 1,500 sub-queries to say how many items and
+# how much of each had come back. One grouped pass over the two child tables,
+# joined on, answers every row at once.
 _SALE_SELECT = """
     SELECT s.*, c.name AS customer_name, u.username AS cashier,
            u.full_name AS cashier_name,
-           (SELECT COALESCE(SUM(qty), 0) FROM sale_items i WHERE i.sale_id = s.sale_id)
-               AS item_count,
-           (SELECT COALESCE(SUM(returned_qty), 0) FROM sale_items i
-             WHERE i.sale_id = s.sale_id) AS returned_count,
-           COALESCE((SELECT SUM(r.total_usd) FROM returns r
-             WHERE r.sale_id = s.sale_id), 0) AS refunded_usd
+           COALESCE(ic.item_count, 0) AS item_count,
+           COALESCE(ic.returned_count, 0) AS returned_count,
+           COALESCE(rf.refunded_usd, 0) AS refunded_usd
     FROM sales s
     LEFT JOIN customers c ON c.customer_id = s.customer_id
     LEFT JOIN users u ON u.user_id = s.user_id
+    LEFT JOIN (
+        SELECT sale_id,
+               SUM(qty) AS item_count,
+               SUM(returned_qty) AS returned_count
+        FROM sale_items
+        GROUP BY sale_id
+    ) ic ON ic.sale_id = s.sale_id
+    LEFT JOIN (
+        SELECT sale_id, SUM(total_usd) AS refunded_usd
+        FROM returns
+        GROUP BY sale_id
+    ) rf ON rf.sale_id = s.sale_id
 """
 
 
@@ -494,12 +507,9 @@ def list_sales(
     clauses: list[str] = []
     params: list = []
 
-    if date_from:
-        clauses.append("date(s.sale_time) >= date(?)")
-        params.append(date_from)
-    if date_to:
-        clauses.append("date(s.sale_time) <= date(?)")
-        params.append(date_to)
+    date_clauses, date_params = db.date_range_clauses("s.sale_time", date_from, date_to)
+    clauses += date_clauses
+    params += date_params
     if status:
         clauses.append("s.status = ?")
         params.append(status)

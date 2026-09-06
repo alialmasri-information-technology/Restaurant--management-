@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+import datetime as dt
 from pathlib import Path
+from tkinter import filedialog
 
 import customtkinter as ctk
 
@@ -11,7 +14,7 @@ from app.money import D, fmt_lbp, fmt_usd, parse_amount, to_lbp
 from app.services import audit as audit_service
 from app.services import backups as backups_service
 from app.services import settings as settings_service
-from app.ui import theme
+from app.ui import background, theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,
@@ -21,6 +24,7 @@ from app.ui.widgets import (
     Modal,
     SectionTitle,
     ask_confirm,
+    debounce,
     show_error,
     show_info,
 )
@@ -270,8 +274,11 @@ class SettingsView(ctk.CTkScrollableFrame):
         names = ", ".join(row["username"] for row in locked)
         if not ask_confirm(self, f"Unlock {names}?", "Unlock accounts"):
             return
-        for row in locked:
-            auth.clear_lockout(row["username"])
+        # One commit rather than one per account: an unlock of several accounts
+        # that died halfway would otherwise leave the rest still locked.
+        with db.transaction():
+            for row in locked:
+                auth.clear_lockout(row["username"])
         audit_service.record("Accounts unlocked", "user", "", names)
         self._refresh_locked_label()
         show_info(self, f"Unlocked: {names}", "Accounts unlocked")
@@ -323,6 +330,11 @@ class SettingsView(ctk.CTkScrollableFrame):
             command=self._save_backup_options,
         )
         self.backup_start_check.grid(row=0, column=0, sticky="w", padx=(0, 16))
+        self.backup_close_check = ctk.CTkCheckBox(
+            options, text="Back up automatically at closing",
+            command=self._save_backup_options,
+        )
+        self.backup_close_check.grid(row=1, column=0, sticky="w", pady=(4, 0))
         ctk.CTkLabel(
             options, text="Keep", font=theme.font(12), text_color=theme.TEXT_MUTED,
         ).grid(row=0, column=1, sticky="w", padx=(0, 6))
@@ -351,6 +363,42 @@ class SettingsView(ctk.CTkScrollableFrame):
             card, text="", font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w",
         )
         self.backup_label.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
+
+        SectionTitle(card, "Keeping and tidying").grid(
+            row=5, column=0, sticky="ew", padx=16, pady=(0, 2)
+        )
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Scratch work is tidied at start-up. Records are kept for ever "
+                "unless you say otherwise — 0 means never delete."
+            ),
+            font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w",
+            wraplength=820, justify="left",
+        ).grid(row=6, column=0, sticky="ew", padx=16, pady=(0, 10))
+
+        keep_row = ctk.CTkFrame(card, fg_color="transparent")
+        keep_row.grid(row=7, column=0, sticky="ew", padx=16)
+        self._keep_entries = {}
+        for column, (key, label) in enumerate((
+            ("parked_keep_days", "Held sales kept (days)"),
+            ("receipt_keep_days", "Receipts kept (days)"),
+            ("audit_keep_days", "Audit log kept (days)"),
+        )):
+            ctk.CTkLabel(
+                keep_row, text=label, font=theme.font(12),
+                text_color=theme.TEXT_MUTED,
+            ).grid(row=0, column=column * 2, sticky="w", padx=(0, 6))
+            entry = ctk.CTkEntry(keep_row, width=70, height=32)
+            entry.grid(row=0, column=column * 2 + 1,
+                       sticky="w", padx=(0, 16 if column < 2 else 0))
+            self._keep_entries[key] = entry
+
+        ctk.CTkButton(
+            card, text="Save tidying", height=34, width=130,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._save_retention,
+        ).grid(row=8, column=0, sticky="w", padx=16, pady=(10, 16))
 
     def _build_account_card(self) -> None:
         card = Card(self)
@@ -447,17 +495,25 @@ class SettingsView(ctk.CTkScrollableFrame):
     # ------------------------------------------------------------------ #
 
     def _find_printers(self) -> None:
-        names = printing.list_printers()
-        if not names:
-            show_info(
-                self,
-                "No printers could be listed. You can still print through the "
-                "system default.",
-                "No printers found",
-            )
-        self.printer_menu.configure(values=[SYSTEM_PRINTER] + names)
-        if names:
-            show_info(self, f"Found {len(names)} printer(s).", "Printers")
+        # Asking Windows for its printer list is a PowerShell subprocess that
+        # can take the better part of half a minute on a sleepy machine; it
+        # happens away from the UI thread.
+        def job():
+            return printing.list_printers()
+
+        def done(names: list[str]) -> None:
+            self.printer_menu.configure(values=[SYSTEM_PRINTER] + names)
+            if names:
+                show_info(self, f"Found {len(names)} printer(s).", "Printers")
+            else:
+                show_info(
+                    self,
+                    "No printers could be listed. You can still print through the "
+                    "system default.",
+                    "No printers found",
+                )
+
+        background.run(job, done, parent=self)
 
     def _save_printing(self) -> None:
         chosen = self.printer_var.get()
@@ -487,19 +543,38 @@ class SettingsView(ctk.CTkScrollableFrame):
             return
         settings_service.set_many({
             "backup_on_start": "1" if self.backup_start_check.get() else "0",
+            "backup_on_close": "1" if self.backup_close_check.get() else "0",
             "backup_keep": str(max(keep, 1)),
         })
 
+    def _save_retention(self) -> None:
+        values = {}
+        try:
+            for key, entry in self._keep_entries.items():
+                values[key] = str(max(0, int(parse_amount(entry.get() or "0", key))))
+        except ValueError as exc:
+            show_error(self, exc, "Invalid value")
+            return
+        settings_service.set_many(values)
+        show_info(self, "Tidying rules saved. They take effect at the next start-up.",
+                  "Saved")
+
     def _backup_now(self) -> None:
         self._save_backup_options()
-        try:
+
+        def job():
             path = backups_service.create("manual")
-        except backups_service.BackupError as exc:
+            backups_service.prune(settings_service.backup_keep())
+            return path
+
+        def done(path) -> None:
+            self._refresh_backup_label()
+            show_info(self, f"Backup written to:\n{path}", "Backup complete")
+
+        def failed(exc: Exception) -> None:
             show_error(self, exc, "Backup failed")
-            return
-        backups_service.prune(settings_service.backup_keep())
-        self._refresh_backup_label()
-        show_info(self, f"Backup written to:\n{path}", "Backup complete")
+
+        background.run(job, done, failed, parent=self)
 
     def _restore(self) -> None:
         entries = backups_service.list_backups()
@@ -518,11 +593,17 @@ class SettingsView(ctk.CTkScrollableFrame):
             "Restore backup",
         ):
             return
+        # This one stays on the UI thread: restore closes and reopens *this*
+        # thread's database connection, which no worker may do on its behalf.
+        # The cursor says the window is busy for the second it takes.
+        background.busy(self)
         try:
             safety = backups_service.restore(path)
         except backups_service.BackupError as exc:
             show_error(self, exc, "Restore failed")
             return
+        finally:
+            background.settled(self)
 
         self._refresh_backup_label()
         self.shell.invalidate(
@@ -537,20 +618,25 @@ class SettingsView(ctk.CTkScrollableFrame):
         )
 
     def _integrity_check(self) -> None:
-        detail = db.integrity_check()
-        if detail.strip().lower() == "ok":
-            show_info(
-                self,
-                "The database passed its integrity check.",
-                "Database checked",
-            )
-        else:
-            show_error(
-                self,
-                f"The database reported a problem:\n\n{detail}\n\n"
-                f"Restore the most recent backup.",
-                "Database problem",
-            )
+        def job():
+            return db.integrity_check()
+
+        def done(detail: str) -> None:
+            if detail.strip().lower() == "ok":
+                show_info(
+                    self,
+                    "The database passed its integrity check.",
+                    "Database checked",
+                )
+            else:
+                show_error(
+                    self,
+                    f"The database reported a problem:\n\n{detail}\n\n"
+                    f"Restore the most recent backup.",
+                    "Database problem",
+                )
+
+        background.run(job, done, parent=self)
 
     def _open_audit(self) -> None:
         AuditModal(self)
@@ -650,8 +736,13 @@ class SettingsView(ctk.CTkScrollableFrame):
         _set_check(self.require_shift_check, settings_service.require_shift())
         _set_check(self.price_override_check, settings_service.allow_price_override())
         _set_check(self.backup_start_check, settings_service.backup_on_start())
+        _set_check(self.backup_close_check, settings_service.backup_on_close())
         self.backup_keep_entry.delete(0, "end")
         self.backup_keep_entry.insert(0, str(settings_service.backup_keep()))
+        for key, entry in self._keep_entries.items():
+            value = settings_service.get(key, config.DEFAULT_SETTINGS.get(key, "0"))
+            entry.delete(0, "end")
+            entry.insert(0, str(max(0, int(value or 0))))
         self._refresh_backup_label()
 
         self._update_preview()
@@ -745,7 +836,7 @@ class AuditModal(Modal):
             bar, placeholder_text="Search by user, detail or record", height=34
         )
         self.search.grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        self.search.bind("<KeyRelease>", lambda _event: self.reload())
+        self.search.bind("<KeyRelease>", debounce(self, 250, self.reload))
 
         self.action = ctk.CTkOptionMenu(
             bar, values=["All"] + audit_service.known_actions(), width=200, height=34,
@@ -753,6 +844,12 @@ class AuditModal(Modal):
         )
         self.action.set("All")
         self.action.grid(row=0, column=1)
+
+        ctk.CTkButton(
+            bar, text="Export CSV", width=120, height=34,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._export,
+        ).grid(row=0, column=2, padx=(8, 0))
 
         self.table = DataTable(
             self,
@@ -783,3 +880,33 @@ class AuditModal(Modal):
             tag_func=lambda row: "danger" if "failed" in row["action"].lower() else (),
             empty_message="Nothing has been recorded yet.",
         )
+
+    def _export(self) -> None:
+        rows = audit_service.list_entries(
+            search=self.search.get(), action=self.action.get(), limit=100000
+        )
+        if not rows:
+            show_error(self, "There are no lines to export.", "Nothing to export")
+            return
+        target = filedialog.asksaveasfilename(
+            parent=self,
+            title="Export audit log to CSV",
+            defaultextension=".csv",
+            initialfile=f"re4-audit-{dt.date.today():%Y%m%d}.csv",
+            filetypes=[("CSV file", "*.csv")],
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", newline="", encoding="utf-8-sig") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["When", "Who", "Action", "Record", "Id", "Detail"])
+                for row in rows:
+                    writer.writerow([
+                        row["at"], row["username"], row["action"],
+                        row["entity"], row["entity_id"], row["detail"],
+                    ])
+        except OSError as exc:
+            show_error(self, exc, "Could not write the file")
+            return
+        show_info(self, f"{len(rows)} line(s) exported to:\n{target}", "Export complete")

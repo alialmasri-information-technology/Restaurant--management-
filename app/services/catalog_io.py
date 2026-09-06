@@ -125,6 +125,20 @@ def analyse(path) -> ImportPlan:
     except OSError as exc:
         raise ImportError_(f"Could not open {path.name}: {exc}") from exc
 
+    # The catalogue is read once, not once per row: a 900-line supplier file
+    # otherwise means 900 queries on the UI thread to answer the same question
+    # the first one did.
+    catalogue = {
+        row["sku"].lower(): row
+        for row in db.query(
+            """
+            SELECT product_id, sku, name, barcode, cost_usd, price_usd,
+                   stock_qty, reorder_level
+            FROM products
+            """
+        )
+    }
+
     with handle:
         reader = csv.DictReader(handle)
         mapping, unknown = _map_columns(reader.fieldnames)
@@ -138,11 +152,11 @@ def analyse(path) -> ImportPlan:
         plan = ImportPlan(unknown_columns=unknown)
         seen: set[str] = set()
         for line_no, raw in enumerate(reader, start=2):
-            plan.rows.append(_plan_row(line_no, raw, mapping, seen))
+            plan.rows.append(_plan_row(line_no, raw, mapping, seen, catalogue))
     return plan
 
 
-def _plan_row(line_no: int, raw: dict, mapping: dict, seen: set) -> RowPlan:
+def _plan_row(line_no: int, raw: dict, mapping: dict, seen: set, catalogue: dict) -> RowPlan:
     def value(field_name, default=""):
         column = mapping.get(field_name)
         if column is None:
@@ -196,7 +210,7 @@ def _plan_row(line_no: int, raw: dict, mapping: dict, seen: set) -> RowPlan:
             return RowPlan(line_no, sku, name, "error", f"{label.capitalize()} cannot be negative.")
         values[field_name] = number
 
-    existing = products_service.get_by_sku(sku)
+    existing = catalogue.get(sku.lower())
     if existing is None:
         if values["price_usd"] is None:
             return RowPlan(line_no, sku, name, "error", "A new product needs a price.")

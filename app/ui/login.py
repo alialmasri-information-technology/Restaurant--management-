@@ -82,18 +82,26 @@ class LoginView(ctk.CTkFrame):
             self.username_entry.focus_set()
 
     def _first_run_hint(self) -> str:
-        """Only reveal the bootstrap credentials while they are still in place."""
+        """Only reveal the bootstrap credentials while they are still in place.
+
+        Checked quietly against the stored hash. Calling authenticate here —
+        as this once did — would sign somebody in the moment the app opens:
+        two PBKDF2 runs at login-screen construction, a *Signed in* line in the
+        audit trail that no person wrote, and a last_login_at from before
+        anyone has touched the keyboard.
+        """
         users = db.query("SELECT username FROM users")
-        if len(users) == 1 and users[0]["username"].lower() == "admin":
-            try:
-                auth.authenticate("admin", "admin123")
-            except auth.AuthError:
-                return ""
-            return (
-                "This is the first run. Sign in as admin / admin123 and you will "
-                "be asked to pick a password of your own straight away."
-            )
-        return ""
+        if len(users) != 1 or users[0]["username"].lower() != "admin":
+            return ""
+        stored = db.query_one(
+            "SELECT password_hash FROM users WHERE username = 'admin'"
+        )
+        if stored is None or not auth.verify_password("admin123", stored["password_hash"]):
+            return ""
+        return (
+            "This is the first run. Sign in as admin / admin123 and you will "
+            "be asked to pick a password of your own straight away."
+        )
 
     def attempt_login(self) -> None:
         self.message.configure(text="")

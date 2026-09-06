@@ -13,16 +13,28 @@ class SupplierError(Exception):
     """Raised for user-facing supplier failures."""
 
 
+# The per-supplier roll-ups are one grouped pass over products and purchase
+# orders, joined on — not three correlated sub-queries per supplier row.
 _SELECT = """
     SELECT s.*,
-           (SELECT COUNT(*) FROM products p
-             WHERE p.supplier_id = s.supplier_id AND p.is_active = 1) AS product_count,
-           (SELECT COUNT(*) FROM purchase_orders o
-             WHERE o.supplier_id = s.supplier_id) AS order_count,
-           COALESCE((SELECT SUM(o.total_cost_usd) FROM purchase_orders o
-             WHERE o.supplier_id = s.supplier_id AND o.status IN ('Received', 'Partially Received')
-           ), 0) AS purchased_usd
+           COALESCE(pc.product_count, 0) AS product_count,
+           COALESCE(oc.order_count, 0) AS order_count,
+           COALESCE(oc.purchased_usd, 0) AS purchased_usd
     FROM suppliers s
+    LEFT JOIN (
+        SELECT p.supplier_id, COUNT(*) AS product_count
+        FROM products p
+        WHERE p.is_active = 1
+        GROUP BY p.supplier_id
+    ) pc ON pc.supplier_id = s.supplier_id
+    LEFT JOIN (
+        SELECT o.supplier_id,
+               COUNT(*) AS order_count,
+               SUM(CASE WHEN o.status IN ('Received', 'Partially Received')
+                        THEN o.total_cost_usd ELSE 0 END) AS purchased_usd
+        FROM purchase_orders o
+        GROUP BY o.supplier_id
+    ) oc ON oc.supplier_id = s.supplier_id
 """
 
 

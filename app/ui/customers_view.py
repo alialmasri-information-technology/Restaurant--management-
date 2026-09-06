@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+import datetime as dt
+from tkinter import filedialog
+
 import customtkinter as ctk
 
 from app import config
@@ -17,6 +21,7 @@ from app.ui.widgets import (
     Modal,
     SectionTitle,
     ask_confirm,
+    debounce,
     show_error,
     show_info,
 )
@@ -33,16 +38,21 @@ class CustomersView(ctk.CTkFrame):
         header = PageHeader(self, "Customers", "Contact details and purchase history")
         header.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 14))
         ctk.CTkButton(
+            header.actions, text="Export CSV", height=36, width=120,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._export,
+        ).grid(row=0, column=0, padx=(0, 8))
+        ctk.CTkButton(
             header.actions, text="+ Add customer", height=36, width=150,
             font=theme.font(13, "bold"), command=self._add,
-        ).grid(row=0, column=0)
+        ).grid(row=0, column=1)
 
         search_row = ctk.CTkFrame(self, fg_color="transparent")
         search_row.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
         search_row.grid_columnconfigure(0, weight=1)
 
         self.search_var = ctk.StringVar()
-        self.search_var.trace_add("write", lambda *_: self.refresh())
+        self.search_var.trace_add("write", debounce(self, 250, self.refresh))
         ctk.CTkEntry(
             search_row, textvariable=self.search_var, height=36,
             placeholder_text="Search by name, phone or email…",
@@ -252,6 +262,43 @@ class CustomersView(ctk.CTkFrame):
         if FormModal(self, f"Credit limit — {customer['name']}", fields, submit,
                      submit_text="Save limit").wait_result():
             self.refresh()
+
+    def _export(self) -> None:
+        rows = customers_service.list_customers()
+        if not rows:
+            show_error(self, "There are no customers to export.", "Nothing to export")
+            return
+        target = filedialog.asksaveasfilename(
+            parent=self,
+            title="Export customers to CSV",
+            defaultextension=".csv",
+            initialfile=f"re4-customers-{dt.date.today():%Y%m%d}.csv",
+            filetypes=[("CSV file", "*.csv")],
+        )
+        if not target:
+            return
+        try:
+            with open(target, "w", newline="", encoding="utf-8-sig") as handle:
+                writer = csv.writer(handle)
+                writer.writerow([
+                    "Name", "Phone", "Email", "Address", "Notes",
+                    "Credit limit USD", "Balance USD", "Purchases",
+                    "Total spent USD", "Last purchase",
+                ])
+                for row in rows:
+                    writer.writerow([
+                        row["name"], row["phone"], row["email"],
+                        row["address"], row["notes"],
+                        f"{row['credit_limit_usd']:.2f}",
+                        f"{row['balance_usd']:.2f}",
+                        row["purchase_count"],
+                        f"{row['total_spent_usd']:.2f}",
+                        row["last_purchase"] or "",
+                    ])
+        except OSError as exc:
+            show_error(self, exc, "Could not write the file")
+            return
+        show_info(self, f"{len(rows)} customer(s) exported to:\n{target}", "Export complete")
 
     def refresh(self) -> None:
         self.table.set_rows(

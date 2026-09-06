@@ -321,9 +321,23 @@ ADDED_COLUMNS = (
     ("customers", "credit_limit_usd", "REAL NOT NULL DEFAULT 0"),
 )
 
+# Every column the services filter or aggregate on that the schema above does
+# not cover. Barcode lookup scans the shelf, X/Z reports sum the ledger per
+# drawer, the CSV importer and the product-delete guard probe sale and purchase
+# lines by product, the suppliers screen counts products per supplier, and the
+# day report and returns list walk a day's ledger and returns by timestamp.
+# Without these each of those is a full-table scan that grows for as long as
+# the shop trades.
 LATE_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_products_barcode ON products (barcode)",
-    "CREATE INDEX IF NOT EXISTS idx_sales_shift ON sales (shift_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sales_shift      ON sales (shift_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ledger_shift     ON customer_ledger (shift_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ledger_at        ON customer_ledger (at)",
+    "CREATE INDEX IF NOT EXISTS idx_sale_items_prod  ON sale_items (product_id)",
+    "CREATE INDEX IF NOT EXISTS idx_po_items_prod    ON purchase_order_items (product_id)",
+    "CREATE INDEX IF NOT EXISTS idx_products_sup     ON products (supplier_id)",
+    "CREATE INDEX IF NOT EXISTS idx_returns_at       ON returns (created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_log (action)",
 )
 
 
@@ -415,8 +429,49 @@ def execute(sql: str, params=()) -> int:
         return cursor.lastrowid
 
 
+def date_range_clauses(column: str, date_from: str | None, date_to: str | None):
+    """WHERE clauses for an inclusive date range on a TEXT timestamp column.
+
+    Written sargably: ``date({column}) >= date(?)`` wraps the column in a
+    function, which forces SQLite to read and parse every row before it can
+    compare. Comparing the raw ISO timestamp lexicographically
+    (``'2026-09-06 17:20' >= '2026-09-06'``) lets the query use the index on
+    that column instead, which is what keeps the day report, the ledger and the
+    audit trail fast on a database a shop has been trading on for years.
+    """
+    clauses: list[str] = []
+    params: list = []
+    if date_from:
+        clauses.append(f"{column} >= date(?)")
+        params.append(date_from)
+    if date_to:
+        # Exclusive upper bound one day past the last inclusive date.
+        clauses.append(f"{column} < date(?, '+1 day')")
+        params.append(date_to)
+    return clauses, params
+
+
 def table_columns(table: str) -> set[str]:
     return {row["name"] for row in query(f"PRAGMA table_info({table})")}
+
+
+def checkpoint() -> None:
+    """Fold the write-ahead log back into the database file and shrink it.
+
+    WAL grows between checkpoints, and on a till that is never shut down
+    gracefully it grows for as long as the shop trades — leaving a power cut
+    with a bigger backlog to recover, and a backup that must replay all of it.
+    TRUNCATE resets the file so the next session begins small.
+    """
+    try:
+        get_connection().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.DatabaseError:  # pragma: no cover - exotic SQLite builds
+        logs.warning("WAL checkpoint failed")
+
+
+def foreign_key_problems() -> list[sqlite3.Row]:
+    """Rows that point at something that is not there, if any exist."""
+    return query("PRAGMA foreign_key_check")
 
 
 def integrity_check() -> str:
