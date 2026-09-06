@@ -115,13 +115,22 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: RE4-windows-installer
+      # A re-run after a failed publish finds the old draft in the way: a
+      # create for a tag that already has a release refuses.
+      - name: Clear any stale draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "$GITHUB_REF_NAME" --yes || true
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Draft first, upload into it, then publish: uploading into a
-          # release created moments ago can 404 while GitHub propagates it,
-          # and a draft is invisible until everything has landed.
-          gh release create "$GITHUB_REF_NAME" --draft --title "RE4 $GITHUB_REF_NAME" --generate-notes
-          gh release upload "$GITHUB_REF_NAME" RE4.exe *.exe --clobber
-          gh release edit "$GITHUB_REF_NAME" --draft=false
+          set -e
+          # A draft release never carries a real tag (GitHub calls it
+          # untagged-… until it is published), so the steps below must address
+          # the draft by the URL create prints, never by tag name — a lookup
+          # by tag finds nothing and 404s.
+          url=$(gh release create "$GITHUB_REF_NAME" --draft \
+            --title "RE4 $GITHUB_REF_NAME" --generate-notes)
+          gh release upload "$url" RE4.exe *.exe --clobber
+          gh release edit "$url" --draft=false
