@@ -5,6 +5,53 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [2.6.0] — 2026-09-06
+
+Schema v5, v6 and v7 — all additive: an existing shop database gains nullable
+columns and new tables on its next start-up, and nothing it already has is
+touched. This release is the rest of the shop: categories that tax
+differently, gift cards, and layaways.
+
+### Added
+
+**A category can carry its own tax rate.** Essentials are often taxed
+differently from everything else, and the store-wide rate could not say so.
+Each category has a tax percentage of its own now; blank means whatever the
+store charges. The rate travels with the cart line the way the cost does —
+taken when the line is added, so a rate changed mid-sale does not rewrite the
+cart — and the invoice discount comes off before tax, shared across lines in
+proportion to what each is worth. One percentage everywhere is computed
+exactly as it always was.
+
+**Gift cards, sold and taken at the till.** A card is sold like any other
+line: a button mints a code, the sale pays for it, and the card comes alive
+inside that sale's transaction, so a rolled-back sale never leaves a live
+card behind. It is spent by typing the code where the payment goes — the
+card pays what it holds towards the total, re-checked in the same
+transaction that writes the sale, and the rest is taken by the chosen
+payment method as usual. Every movement is one signed event row, so a
+card's history reads like the customer ledger reads. The Till screen has a
+Gift cards window: what the shop owes on cards together, one card's history,
+and — for an administrator — issuing and disabling. A gift card line cannot
+be handed back as a cash refund, and a card cannot pay for another card.
+
+**Layaways: goods set aside, paid over time.** A layaway keeps three
+promises. The price is frozen when the goods are held, so next month's price
+change cannot quietly rewrite somebody's agreement. A cash deposit is real
+money from the moment it is taken — it goes into the drawer as a cash
+movement, and collecting the rest does not count it twice; the invoice
+records what it has received across both moments. And the shelves tell the
+truth: stock is not decremented while goods sit in the back room, and
+collection runs through the same stock check as any other sale, so goods
+sold in the meantime stop the collection with an explanation instead of an
+oversold invoice. Held from the New Sale screen, collected or cancelled from
+the Till screen; cancelling hands the deposit back out of the drawer, and
+refuses to do so into a till that is not open, before anything is written.
+
+### Tests
+
+- 540, up from 470.
+
 ## [2.5.0] — 2026-09-06
 
 No schema change. This release is about speed that lasts: the queries that were

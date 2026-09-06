@@ -16,7 +16,7 @@
 
 #define AppName "RE4"
 ; Bump this with each release, alongside pyproject.toml and app/config.py.
-#define AppVersion "2.5.0"
+#define AppVersion "2.6.0"
 #define AppExe "RE4.exe"
 
 [Setup]
