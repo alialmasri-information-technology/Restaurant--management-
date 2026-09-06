@@ -6,6 +6,7 @@ import customtkinter as ctk
 
 from app import config
 from app.money import fmt_usd, parse_amount
+from app.services import giftcards as giftcards_service
 from app.services import shifts as shifts_service
 from app.ui import phrasing, receipt_actions, theme
 from app.ui.shell import PageHeader
@@ -15,9 +16,11 @@ from app.ui.widgets import (
     FormModal,
     SectionTitle,
     StatCard,
+    ask_confirm,
     show_error,
     show_info,
 )
+from app.ui.widgets import debounce as widgets_debounce
 
 MOVEMENT_COLUMNS = (
     ("at", "Time", 150, "w"),
@@ -124,6 +127,12 @@ class TillView(ctk.CTkFrame):
             command=self.close_shift,
         )
         self.close_button.grid(row=0, column=5)
+
+        ctk.CTkButton(
+            actions, text="Gift cards", width=110, height=38,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=lambda: GiftCardsModal(self, self.user),
+        ).grid(row=0, column=6, padx=(8, 0))
 
     def _build_body(self) -> None:
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -392,3 +401,228 @@ class TillView(ctk.CTkFrame):
         shift = shifts_service.get_shift(shift_id)
         kind = "X" if shift and shift["status"] == config.SHIFT_OPEN else "Z"
         receipt_actions.print_shift_report(self, shift_id, kind=kind)
+
+
+class GiftCardsModal(ctk.CTkToplevel):
+    """What the shop owes on cards, and which one paid for what."""
+
+    def __init__(self, parent, user):
+        super().__init__(parent)
+        self.title("Gift cards")
+        self.configure(fg_color=theme.BG)
+        self.geometry("880x520")
+        self.transient(parent.winfo_toplevel())
+        self.user = user
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(3, weight=1)
+
+        SectionTitle(self, "Gift cards").grid(
+            row=0, column=0, sticky="ew", padx=18, pady=(18, 4)
+        )
+        self.summary_label = ctk.CTkLabel(
+            self, text="", font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w"
+        )
+        self.summary_label.grid(row=1, column=0, sticky="ew", padx=18)
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 4))
+        bar.grid_columnconfigure(0, weight=1)
+        self.search_var = ctk.StringVar()
+        self.search_var.trace_add("write", widgets_debounce(self, 250, self.reload))
+        ctk.CTkEntry(
+            bar, textvariable=self.search_var, height=34,
+            placeholder_text="Search by code or note�",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+        self.table = DataTable(
+            self,
+            columns=[
+                ("code", "Code", 170, "w"),
+                ("balance_usd", "Balance", 110, "e"),
+                ("initial_usd", "Loaded", 110, "e"),
+                ("status", "Status", 90, "center"),
+                ("sold_usd", "Sold for", 110, "e"),
+                ("event_count", "Movements", 90, "center"),
+                ("note", "Note", 180, "w"),
+            ],
+            id_key="card_id",
+            height=12,
+        )
+        self.table.grid(row=3, column=0, sticky="nsew", padx=18, pady=(4, 6))
+        for column in ("balance_usd", "initial_usd", "sold_usd"):
+            self.table.set_formatter(column, lambda value, _row: fmt_usd(value))
+        self.table.set_formatter(
+            "status", lambda value, row: "" if row["status"] == "Active" else value
+        )
+        self.table.on_double_click(self._show_history)
+
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            footer, text="History", width=110, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._show_history,
+        ).grid(row=0, column=0, sticky="w")
+        if self.user.is_admin:
+            ctk.CTkButton(
+                footer, text="Issue a card", width=130, height=36,
+                fg_color=theme.PRIMARY, hover_color=theme.PRIMARY_HOVER,
+                command=self._issue,
+            ).grid(row=0, column=1, padx=(0, 8))
+            self.status_button = ctk.CTkButton(
+                footer, text="Disable", width=110, height=36,
+                fg_color=theme.DANGER, hover_color=theme.DANGER_HOVER,
+                command=self._toggle,
+            )
+            self.status_button.grid(row=0, column=2)
+        ctk.CTkButton(
+            footer, text="Close", width=110, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self.destroy,
+        ).grid(row=0, column=3, padx=(8, 0))
+
+        self.bind("<Escape>", lambda _event: self.destroy())
+        self.after(80, self._grab)
+        self.reload()
+
+    def _grab(self) -> None:
+        if not self.winfo_exists():
+            return
+        try:
+            self.grab_set()
+            self.focus_force()
+        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
+            pass
+
+    def reload(self) -> None:
+        self.table.set_rows(
+            giftcards_service.list_cards(self.search_var.get()),
+            empty_message="No gift cards yet. Sell one at the till, or issue one here.",
+        )
+        totals = giftcards_service.totals()
+        self.summary_label.configure(
+            text=(
+                f"{totals['cards']} card(s) � {totals['active']} active � "
+                f"the shop owes {fmt_usd(totals['liability_usd'])} on cards"
+            )
+        )
+        self._refresh_status_button()
+
+    def _refresh_status_button(self) -> None:
+        if not self.user.is_admin:
+            return
+        card = self._selected()
+        disabled = card is not None and card["status"] == giftcards_service.DISABLED
+        self.status_button.configure(
+            text="Enable" if disabled else "Disable",
+            fg_color=theme.SUCCESS if disabled else theme.DANGER,
+            hover_color=theme.SUCCESS_HOVER if disabled else theme.DANGER_HOVER,
+        )
+
+    def _selected(self):
+        card_id = self.table.selected_int()
+        return giftcards_service.get_by_id(card_id) if card_id is not None else None
+
+    def _show_history(self) -> None:
+        card = self._selected()
+        if card is None:
+            show_error(self, "Pick a card first.", "Nothing selected")
+            return
+        GiftCardHistoryModal(self, card)
+
+    def _issue(self) -> None:
+        fields = [
+            {"key": "amount", "label": "How much to load (USD)", "type": "number"},
+            {"key": "note", "label": "Who it is for (optional)", "type": "entry"},
+        ]
+
+        def submit(values):
+            card = giftcards_service.issue(
+                values["amount"], user_id=self.user.user_id, note=values["note"]
+            )
+            show_info(self, f"Card {card['code']} issued, loaded with "
+                           f"{fmt_usd(card['balance_usd'])}.", "Card issued")
+
+        if FormModal(self, "Issue a gift card", fields, submit,
+                     submit_text="Issue").wait_result():
+            self.reload()
+
+    def _toggle(self) -> None:
+        card = self._selected()
+        if card is None:
+            show_error(self, "Pick a card first.", "Nothing selected")
+            return
+        disabled = card["status"] == giftcards_service.DISABLED
+        if not ask_confirm(
+            self,
+            (f"Re-enable {card['code']}?" if disabled
+             else f"Disable {card['code']}?\n\nIt will not be accepted at the "
+                  "till while it is disabled. Its balance is unchanged."),
+            "Gift card",
+        ):
+            return
+        giftcards_service.set_status(
+            card["card_id"],
+            giftcards_service.ACTIVE if disabled else giftcards_service.DISABLED,
+        )
+        self.reload()
+
+
+class GiftCardHistoryModal(ctk.CTkToplevel):
+    """One card's movements, newest first."""
+
+    def __init__(self, parent, card):
+        super().__init__(parent)
+        self.title(f"Gift card {card['code']}")
+        self.configure(fg_color=theme.BG)
+        self.geometry("620x420")
+        self.transient(parent.winfo_toplevel())
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        SectionTitle(
+            self,
+            f"{card['code']}  �  {fmt_usd(card['balance_usd'])} left of "
+            f"{fmt_usd(card['initial_usd'])}",
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 8))
+
+        table = DataTable(
+            self,
+            columns=[
+                ("at", "When", 150, "w"),
+                ("kind", "Kind", 90, "center"),
+                ("amount_usd", "Amount", 110, "e"),
+                ("username", "By", 110, "w"),
+                ("note", "Note", 180, "w"),
+            ],
+            id_key="event_id",
+            height=10,
+        )
+        table.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 10))
+        table.set_formatter(
+            "amount_usd", lambda value, _row: f"+{fmt_usd(value)}" if value >= 0 else fmt_usd(value)
+        )
+        table.set_rows(
+            giftcards_service.history(card["card_id"]),
+            empty_message="No movements yet.",
+        )
+
+        ctk.CTkButton(
+            self, text="Close", width=110, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self.destroy,
+        ).grid(row=2, column=1, sticky="e", padx=18, pady=(0, 16))
+        self.bind("<Escape>", lambda _event: self.destroy())
+        self.after(80, self._grab)
+
+    def _grab(self) -> None:
+        if not self.winfo_exists():
+            return
+        try:
+            self.grab_set()
+            self.focus_force()
+        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
+            pass

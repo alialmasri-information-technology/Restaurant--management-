@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app import config, logs
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 #: How long a writer waits for a competing lock before giving up. Two tills on
 #: one database, or a backup running while a sale commits, otherwise surface as
@@ -262,6 +262,37 @@ CREATE TABLE IF NOT EXISTS login_throttle (
     locked_until TEXT
 );
 
+-- A gift card: a small liability with a paper trail. The balance is whatever
+-- was loaded less whatever has been spent, and every movement is one signed
+-- event row, so a card's history can be read line by line like the customer
+-- ledger can. Cards are sold at the till (the sale pays for them) and are
+-- activated inside that sale's transaction.
+CREATE TABLE IF NOT EXISTS gift_cards (
+    card_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    code          TEXT    NOT NULL UNIQUE,
+    balance_usd   REAL    NOT NULL DEFAULT 0 CHECK (balance_usd >= 0),
+    initial_usd   REAL    NOT NULL DEFAULT 0 CHECK (initial_usd >= 0),
+    status        TEXT    NOT NULL DEFAULT 'Active'
+                           CHECK (status IN ('Active', 'Empty', 'Disabled')),
+    sold_usd      REAL    NOT NULL DEFAULT 0,
+    sold_sale_id  INTEGER REFERENCES sales (sale_id) ON DELETE SET NULL,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    note          TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS gift_card_events (
+    event_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id    INTEGER NOT NULL REFERENCES gift_cards (card_id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL CHECK (kind IN ('Issue', 'Sale', 'Redeem', 'Refund', 'Adjust')),
+    -- Signed: positive loads the card, negative spends from it.
+    amount_usd REAL    NOT NULL,
+    sale_id    INTEGER REFERENCES sales (sale_id) ON DELETE SET NULL,
+    return_id  INTEGER REFERENCES returns (return_id) ON DELETE SET NULL,
+    user_id    INTEGER REFERENCES users (user_id) ON DELETE SET NULL,
+    at         TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    note       TEXT    NOT NULL DEFAULT ''
+);
+
 -- A physical inventory count. Expected quantities are frozen when the count
 -- opens, so trading during the count does not move the goalposts; the variance
 -- is only posted to stock when the count is applied.
@@ -344,6 +375,8 @@ LATE_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_products_sup     ON products (supplier_id)",
     "CREATE INDEX IF NOT EXISTS idx_returns_at       ON returns (created_at)",
     "CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_log (action)",
+    "CREATE INDEX IF NOT EXISTS idx_card_events      ON gift_card_events (card_id)",
+    "CREATE INDEX IF NOT EXISTS idx_card_events_sale ON gift_card_events (sale_id)",
 )
 
 

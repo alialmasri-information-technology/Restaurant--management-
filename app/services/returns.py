@@ -26,13 +26,18 @@ class ReturnError(Exception):
 
 
 def returnable_lines(sale_id: int) -> list[sqlite3.Row]:
-    """Every line of a sale with how many units are still returnable."""
+    """Every line of a sale with how many units are still returnable.
+
+    A gift card line is not merchandise: its value belongs back on the card,
+    which is a decision for whoever holds it, not a cash refund the counter
+    can hand out by mistake.
+    """
     return db.query(
         """
         SELECT i.*, (i.qty - i.returned_qty) AS remaining_qty,
                (i.line_total_usd / i.qty) AS unit_net_usd
         FROM sale_items i
-        WHERE i.sale_id = ?
+        WHERE i.sale_id = ? AND i.sku_at_sale != 'GIFT'
         ORDER BY i.sale_item_id
         """,
         (sale_id,),

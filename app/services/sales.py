@@ -13,6 +13,7 @@ from app.money import ZERO, D, compute_totals, to_float, usd
 from app.money import line_total as compute_line_total
 from app.services import accounts as accounts_service
 from app.services import audit
+from app.services import giftcards as giftcards_service
 from app.services import products as products_service
 from app.services import returns as returns_service
 from app.services import settings as settings_service
@@ -27,7 +28,8 @@ class SaleError(Exception):
 class CartLine:
     """One line in an in-progress sale, held in memory until checkout."""
 
-    product_id: int
+    # A gift card line has no product behind it; its code rides along.
+    product_id: int | None
     sku: str
     name: str
     qty: int
@@ -39,6 +41,11 @@ class CartLine:
     # means the store-wide rate. Taken when the line is added, the way the
     # cost is, so a category rate changed mid-sale does not rewrite the cart.
     tax_rate: Decimal | None = None
+    gift_code: str | None = None
+
+    @property
+    def is_gift_card(self) -> bool:
+        return self.gift_code is not None
 
     @property
     def line_total(self) -> Decimal:
@@ -63,6 +70,9 @@ class Cart:
         self.note: str = ""
         # Products dropped when a parked sale was resumed (deleted or out of stock).
         self.unavailable: list = []
+        # Gift card lines have no product behind them; they take ids counting
+        # down from -1 so they never collide with a real product or each other.
+        self._next_synthetic_id = -1
 
     # -- line management ---------------------------------------------------- #
 
@@ -100,6 +110,26 @@ class Cart:
             stock_available=product["stock_qty"],
             list_price=usd(product["price_usd"]),
             tax_rate=D(rate) if rate is not None else None,
+        )
+        self.lines.append(line)
+        return line
+
+    def add_gift_card(self, code: str, amount) -> CartLine:
+        """A card the customer is buying now; it comes alive at checkout."""
+        value = usd(D(amount))
+        if value <= ZERO:
+            raise SaleError("A gift card has to be loaded with something.")
+        code = giftcards_service.normalise(code)
+        self._next_synthetic_id -= 1
+        line = CartLine(
+            product_id=self._next_synthetic_id,
+            sku="GIFT",
+            name=f"Gift card {code}",
+            qty=1,
+            unit_price=value,
+            stock_available=10**9,
+            list_price=value,
+            gift_code=code,
         )
         self.lines.append(line)
         return line
@@ -153,6 +183,7 @@ class Cart:
         self.discount = ZERO
         self.customer_id = None
         self.note = ""
+        self._next_synthetic_id = -1
 
     # -- totals ------------------------------------------------------------- #
 
@@ -193,6 +224,7 @@ class Cart:
                     "qty": line.qty,
                     "unit_price": str(line.unit_price),
                     "discount": str(line.discount),
+                    "gift_code": line.gift_code,
                 }
                 for line in self.lines
             ],
@@ -208,6 +240,9 @@ class Cart:
         cart.note = data.get("note", "")
         missing = []
         for entry in data.get("lines", []):
+            if entry.get("gift_code"):
+                cart.add_gift_card(entry["gift_code"], entry.get("unit_price", 0))
+                continue
             product = products_service.get_product(entry["product_id"])
             if product is None or not product["is_active"]:
                 missing.append(entry["product_id"])
@@ -299,11 +334,16 @@ def create_sale(
     note: str = "",
     tax_rate=None,
     exchange_rate=None,
+    gift_card_code: str = "",
+    gift_card_amount=None,
 ) -> int:
     """Commit a cart as an invoice. Returns the new ``sale_id``.
 
     Stock is re-checked against the database inside the transaction, so two
-    tills racing for the last unit cannot both succeed.
+    tills racing for the last unit cannot both succeed. A gift card pays what
+    it holds towards the total first — its balance is re-read and re-checked
+    inside that same transaction — and the rest is taken by the chosen
+    payment method as usual.
     """
     if cart.is_empty:
         raise SaleError("Add at least one product before completing the sale.")
@@ -324,16 +364,43 @@ def create_sale(
 
     subtotal, discount, tax, total = cart.totals(tax_rate=tax_rate)
 
+    # A gift card spends itself first; whatever is left is the payment the
+    # chosen method has to cover. The balance is re-read inside the
+    # transaction below — this pass only decides what is due from the till.
+    gift_code = (gift_card_code or "").strip()
+    gift_applied = ZERO
+    if gift_code:
+        if payment_method == "Credit":
+            raise SaleError("A gift card cannot be combined with credit on account.")
+        if any(line.is_gift_card for line in cart.lines):
+            raise SaleError("A gift card cannot pay for another gift card.")
+        card = db.query_one(
+            "SELECT * FROM gift_cards WHERE code = ?", (giftcards_service.normalise(gift_code),)
+        )
+        if card is None:
+            raise SaleError(f"No gift card matches '{gift_code}'.")
+        if card["status"] == giftcards_service.DISABLED:
+            raise SaleError(f"Gift card {card['code']} has been disabled.")
+        balance = D(card["balance_usd"])
+        if balance <= ZERO or card["status"] == giftcards_service.EMPTY:
+            raise SaleError(f"Gift card {card['code']} is empty.")
+        wanted = balance if gift_card_amount is None else D(gift_card_amount)
+        gift_applied = usd(min(wanted, balance, total))
+        if gift_applied <= ZERO:
+            raise SaleError("There is nothing on this sale for the card to pay for.")
+    remaining_due = total - gift_applied
+
     if customer_id is None:
         customer_id = cart.customer_id
 
     paid = D(amount_paid)
     paid_usd = usd(paid / exchange_rate) if paid_currency == "LBP" else usd(paid)
-    if payment_method == "Cash" and paid_usd < total:
+    if payment_method == "Cash" and paid_usd < remaining_due:
         raise SaleError(
-            f"Cash received ({paid_usd}) is less than the total due ({total})."
+            f"Cash received ({paid_usd}) is less than the total due ({remaining_due})"
+            + (f" after the gift card's {gift_applied}." if gift_applied else ".")
         )
-    change = usd(max(ZERO, paid_usd - total))
+    change = usd(max(ZERO, paid_usd - remaining_due))
 
     if payment_method == "Credit":
         # Nothing is handed over, so nothing is recorded as paid — the invoice
@@ -341,7 +408,7 @@ def create_sale(
         # customer over their limit costs the cashier a payment method, not a
         # half-committed invoice.
         try:
-            accounts_service.check_can_charge(customer_id, total)
+            accounts_service.check_can_charge(customer_id, remaining_due)
         except accounts_service.AccountError as exc:
             raise SaleError(str(exc)) from exc
         paid = ZERO
@@ -380,6 +447,29 @@ def create_sale(
 
         overrides = []
         for line in cart.lines:
+            if line.is_gift_card:
+                # The card on the receipt is a line like any other; the card
+                # itself comes to life here, in the sale's transaction, so a
+                # rolled-back sale never leaves a live card behind.
+                assert line.gift_code is not None
+                conn.execute(
+                    """
+                    INSERT INTO sale_items
+                        (sale_id, product_id, sku_at_sale, name_at_sale, qty,
+                         unit_price_usd, cost_usd, discount_usd, line_total_usd)
+                    VALUES (?, NULL, 'GIFT', ?, 1, ?, 0, 0, ?)
+                    """,
+                    (
+                        sale_id,
+                        line.name,
+                        to_float(line.unit_price),
+                        to_float(line.line_total),
+                    ),
+                )
+                giftcards_service.activate(
+                    conn, line.gift_code, line.unit_price, sale_id, user_id
+                )
+                continue
             product = conn.execute(
                 "SELECT name, sku, cost_usd, stock_qty, price_usd FROM products WHERE product_id = ?",
                 (line.product_id,),
@@ -422,6 +512,11 @@ def create_sale(
                 sale_id=sale_id,
                 conn=conn,
             )
+
+        if gift_applied > ZERO:
+            # Same transaction as the invoice: the card's balance and the sale
+            # that spent it must both land, or neither.
+            giftcards_service.redeem(conn, gift_code, gift_applied, sale_id, user_id)
 
         if payment_method == "Credit":
             # Same transaction as the invoice: a sale on account and the debt it

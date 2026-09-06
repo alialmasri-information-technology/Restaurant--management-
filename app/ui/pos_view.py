@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import customtkinter as ctk
 
 from app import config
 from app.money import ZERO, D, fmt_lbp, fmt_usd, parse_amount, to_lbp, usd
 from app.services import customers as customers_service
+from app.services import giftcards as giftcards_service
 from app.services import products as products_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
@@ -60,10 +63,15 @@ class PosView(ctk.CTkFrame):
         )
         self.parked_button.grid(row=0, column=1)
         ctk.CTkButton(
+            self.header.actions, text="Gift card", width=100, height=36,
+            fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
+            command=self._sell_gift_card,
+        ).grid(row=0, column=2, padx=(8, 0))
+        ctk.CTkButton(
             self.header.actions, text="Keys", width=80, height=36,
             fg_color=theme.NEUTRAL, hover_color=theme.NEUTRAL_HOVER,
             command=lambda: KeysModal(self),
-        ).grid(row=0, column=2, padx=(8, 0))
+        ).grid(row=0, column=3, padx=(8, 0))
 
         self._build_catalogue()
         self._build_cart()
@@ -351,6 +359,16 @@ class PosView(ctk.CTkFrame):
             command=lambda _value: self._render_totals(), width=104, height=32,
         ).grid(row=0, column=1, padx=(6, 0))
 
+        gift_cell = self._field(form, 2, 0, "Pay with gift card — code, optional")
+        self.gift_var = ctk.StringVar()
+        self.gift_var.trace_add("write", debounce(self, 250, self._on_gift_code))
+        ctk.CTkEntry(
+            gift_cell, textvariable=self.gift_var, height=32, placeholder_text="GC-…"
+        ).grid(row=1, column=0, sticky="ew")
+        # A card being bought is not a card paying; the sell button lives on
+        # the same row so the two jobs sit next to each other and stay distinct.
+        self._gift_balance = None
+
         totals = Card(card, fg_color=theme.SURFACE_ALT, border_width=0)
         totals.grid(row=4, column=0, sticky="ew", padx=12, pady=(4, 0))
         totals.grid_columnconfigure(1, weight=1)
@@ -362,6 +380,7 @@ class PosView(ctk.CTkFrame):
             ("discount", "Discount", 11, 11, "normal", theme.TEXT_MUTED),
             ("tax", "Tax", 11, 11, "normal", theme.TEXT_MUTED),
             ("total", "TOTAL", 13, 20, "bold", theme.TEXT),
+            ("gift", "Gift card", 11, 13, "bold", theme.PRIMARY),
             ("lbp", "In LBP", 11, 13, "bold", theme.TEXT_MUTED),
             ("change", "Change", 11, 13, "bold", theme.SUCCESS),
         )
@@ -697,13 +716,24 @@ class PosView(ctk.CTkFrame):
         self.total_labels["total"].configure(text=fmt_usd(total))
         self.total_labels["lbp"].configure(text=fmt_lbp(to_lbp(total, rate, rounding)))
 
+        gift = self._gift_towards(total)
+        self.total_labels["gift"].configure(
+            text=f"-{fmt_usd(gift)}" if gift else "—",
+            text_color=theme.PRIMARY if gift else theme.TEXT_MUTED,
+        )
+
         try:
             paid = parse_amount(self.paid_var.get(), "amount received")
         except ValueError:
             paid = ZERO
         paid_usd = usd(paid / rate) if self.currency_var.get() == "LBP" and rate else usd(paid)
-        difference = paid_usd - total
-        if paid <= ZERO:
+        remaining = total - gift
+        difference = paid_usd - remaining
+        if paid <= ZERO and gift >= total:
+            self.total_labels["change"].configure(
+                text="covered", text_color=theme.SUCCESS
+            )
+        elif paid <= ZERO:
             self.total_labels["change"].configure(text="—", text_color=theme.TEXT_MUTED)
         elif difference >= ZERO:
             self.total_labels["change"].configure(
@@ -713,6 +743,32 @@ class PosView(ctk.CTkFrame):
             self.total_labels["change"].configure(
                 text=f"short {fmt_usd(-difference)}", text_color=theme.DANGER
             )
+
+    def _gift_towards(self, total: Decimal) -> Decimal:
+        """What the typed card code can put towards this total, or zero."""
+        balance = self._gift_balance
+        if balance is None or balance <= ZERO:
+            return ZERO
+        return min(balance, total)
+
+    def _on_gift_code(self) -> None:
+        """Look up the typed card's balance; the till shows what it can pay."""
+        code = self.gift_var.get().strip()
+        if not code:
+            self._gift_balance = None
+            self._render_totals()
+            return
+        try:
+            card = giftcards_service.balance(code)
+        except giftcards_service.GiftCardError:
+            self._gift_balance = None
+            self._render_totals()
+            return
+        self._gift_balance = (
+            ZERO if card["status"] == giftcards_service.DISABLED
+            else D(card["balance_usd"])
+        )
+        self._render_totals()
 
     # ------------------------------------------------------------------ #
     # Checkout
@@ -727,6 +783,26 @@ class PosView(ctk.CTkFrame):
             None,
         )
 
+    def _sell_gift_card(self) -> None:
+        """Sell a card like any other line: it is activated when the sale lands."""
+        fields = [
+            {"key": "amount", "label": "How much to load onto the card (USD)",
+             "type": "number"},
+            {"key": "note", "label": "Who it is for (optional)", "type": "entry"},
+        ]
+
+        def submit(values):
+            code = giftcards_service.generate_code()
+            cart_line = self.cart.add_gift_card(code, values["amount"])
+            cart_line.name = f"Gift card {code}" + (
+                f" — {values['note'].strip()}" if values["note"].strip() else ""
+            )
+            return code
+
+        if FormModal(self, "Sell a gift card", fields, submit,
+                     submit_text="Add to sale").wait_result():
+            self._render_cart()
+
     def _complete_sale(self) -> None:
         if self.cart.is_empty:
             show_error(
@@ -739,6 +815,7 @@ class PosView(ctk.CTkFrame):
             show_error(self, exc, "Invalid amount")
             return
 
+        gift_code = self.gift_var.get().strip()
         try:
             sale_id = sales_service.create_sale(
                 user_id=self.shell.user.user_id,
@@ -748,6 +825,7 @@ class PosView(ctk.CTkFrame):
                 paid_currency=self.currency_var.get(),
                 amount_paid=paid,
                 note=self.cart.note,
+                gift_card_code=gift_code,
             )
         except sales_service.SaleError as exc:
             show_error(self, exc, "Sale not completed")
@@ -761,6 +839,8 @@ class PosView(ctk.CTkFrame):
         self.cart.note = ""
         self.discount_var.set("0")
         self.paid_var.set("")
+        self.gift_var.set("")
+        self._gift_balance = None
         self.search_var.set("")
         self._render_cart()
         self._reload_products()
