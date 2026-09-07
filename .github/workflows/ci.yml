@@ -59,8 +59,14 @@ jobs:
 
       # The UI smoke tests skip themselves when there is no display; xvfb gives
       # them one so they actually run.
+      # xvfb is installed above precisely so the screen tests run here. They
+      # skip themselves when Tk cannot open a window, so a broken xvfb would
+      # take the whole set out of the run without failing it. Promising a
+      # display makes that a failure instead of a silence.
       - name: Run tests (Linux, with a virtual display)
         if: runner.os == 'Linux'
+        env:
+          RE4_REQUIRE_DISPLAY: "1"
         run: xvfb-run -a python -m unittest discover -s tests -t . --verbose
 
       - name: Run tests
