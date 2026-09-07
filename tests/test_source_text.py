@@ -22,7 +22,9 @@ from pathlib import Path
 REPLACEMENT = "\ufffd"
 
 ROOT = Path(__file__).resolve().parent.parent
-SEARCHED = ("*.py", "*.md", "*.iss", "*.toml", "*.yml", "*.bat")
+#: .spec is here because RE4.spec sets the executable's FileDescription, which
+#: Windows shows beside the process in Task Manager.
+SEARCHED = ("*.py", "*.md", "*.iss", "*.toml", "*.yml", "*.bat", "*.spec")
 SKIPPED = {".git", ".venv", "venv", "build", "dist", "__pycache__", ".ruff_cache"}
 
 
