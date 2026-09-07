@@ -33,7 +33,6 @@ MANIFEST
 *.spec
 # ...except RE4's own build definition, which is part of the project.
 !RE4.spec
-!RE4.spec  # the build definition is part of the project
 
 # Installer logs
 pip-log.txt
