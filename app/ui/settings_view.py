@@ -14,6 +14,7 @@ from app.money import D, fmt_lbp, fmt_usd, parse_amount, to_lbp
 from app.services import audit as audit_service
 from app.services import backups as backups_service
 from app.services import settings as settings_service
+from app.spreadsheets import safe_cell as safe
 from app.ui import background, theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
@@ -903,9 +904,11 @@ class AuditModal(Modal):
                 writer = csv.writer(handle)
                 writer.writerow(["When", "Who", "Action", "Record", "Id", "Detail"])
                 for row in rows:
+                    # The detail column quotes the record that was changed, so
+                    # a product named "=cmd|..." is carried in here verbatim.
                     writer.writerow([
-                        row["at"], row["username"], row["action"],
-                        row["entity"], row["entity_id"], row["detail"],
+                        row["at"], safe(row["username"]), row["action"],
+                        row["entity"], row["entity_id"], safe(row["detail"]),
                     ])
         except OSError as exc:
             show_error(self, exc, "Could not write the file")

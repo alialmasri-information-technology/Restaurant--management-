@@ -12,6 +12,7 @@ from app import config
 from app.money import fmt_usd, parse_amount
 from app.services import accounts as accounts_service
 from app.services import customers as customers_service
+from app.spreadsheets import safe_cell as safe
 from app.ui import phrasing, theme
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
@@ -292,9 +293,11 @@ class CustomersView(ctk.CTkFrame):
                     "Total spent USD", "Last purchase",
                 ])
                 for row in rows:
+                    # Names, addresses and notes are typed by staff; a cell
+                    # starting "=" runs as a formula when the file is opened.
                     writer.writerow([
-                        row["name"], row["phone"], row["email"],
-                        row["address"], row["notes"],
+                        safe(row["name"]), safe(row["phone"]), safe(row["email"]),
+                        safe(row["address"]), safe(row["notes"]),
                         f"{row['credit_limit_usd']:.2f}",
                         f"{row['balance_usd']:.2f}",
                         row["purchase_count"],

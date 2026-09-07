@@ -13,6 +13,7 @@ from app.services import accounts as accounts_service
 from app.services import reports as reports_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
+from app.spreadsheets import safe_cell as safe
 from app.ui import receipt_actions, theme
 from app.ui.dashboard_view import BarChart
 from app.ui.shell import PageHeader
@@ -181,19 +182,21 @@ class ReportsView(ctk.CTkScrollableFrame):
                     "Payment method", "Status",
                 ])
                 for row in rows:
+                    # A customer name and a username both reach this file
+                    # exactly as somebody typed them.
                     writer.writerow([
-                        row["invoice_no"],
+                        safe(row["invoice_no"]),
                         row["sale_time"],
-                        row["customer_name"] or "Walk-in",
-                        row["cashier"] or "",
+                        safe(row["customer_name"] or "Walk-in"),
+                        safe(row["cashier"] or ""),
                         row["item_count"],
                         f"{row['subtotal_usd']:.2f}",
                         f"{row['discount_usd']:.2f}",
                         f"{row['tax_usd']:.2f}",
                         f"{row['total_usd']:.2f}",
                         f"{to_lbp(row['total_usd'], D(row['exchange_rate']) or rate, rounding):.0f}",
-                        row["payment_method"],
-                        row["status"],
+                        safe(row["payment_method"]),
+                        safe(row["status"]),
                     ])
         except OSError as exc:
             show_error(self, exc, "Could not write the file")

@@ -12,7 +12,7 @@ import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from app import db
+from app import db, spreadsheets
 from app.money import D
 from app.services import audit
 from app.services import products as products_service
@@ -161,7 +161,10 @@ def _plan_row(line_no: int, raw: dict, mapping: dict, seen: set, catalogue: dict
         column = mapping.get(field_name)
         if column is None:
             return default
-        return (raw.get(column) or "").strip()
+        # plain_text undoes the apostrophe an export adds in front of a cell a
+        # spreadsheet would otherwise run as a formula, so our own file reads
+        # back exactly as it was written.
+        return spreadsheets.plain_text((raw.get(column) or "").strip())
 
     sku = value("sku")
     name = value("name")
@@ -338,6 +341,7 @@ def export_products(path, include_inactive: bool = True) -> int:
     """Write the catalogue to a CSV the importer can read back. Returns row count."""
     # An export is the whole catalogue by definition.
     rows = products_service.list_products(include_inactive=include_inactive, limit=None)
+    safe = spreadsheets.safe_cell
     path = Path(path)
     try:
         with path.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -345,16 +349,21 @@ def export_products(path, include_inactive: bool = True) -> int:
             writer.writeheader()
             for row in rows:
                 writer.writerow({
-                    "sku": row["sku"],
-                    "barcode": row["barcode"],
-                    "name": row["name"],
-                    "category": row["category_name"] or "",
-                    "supplier": row["supplier_name"] or "",
+                    # Every free-text field below is something a person or a
+                    # supplier's file put there, so any of them can arrive
+                    # starting a formula. The numbers are not escaped: they are
+                    # formatted here from numeric columns, and prefixing a
+                    # negative one would land it in the spreadsheet as text.
+                    "sku": safe(row["sku"]),
+                    "barcode": safe(row["barcode"]),
+                    "name": safe(row["name"]),
+                    "category": safe(row["category_name"] or ""),
+                    "supplier": safe(row["supplier_name"] or ""),
                     "cost_usd": f"{row['cost_usd']:.2f}",
                     "price_usd": f"{row['price_usd']:.2f}",
                     "stock_qty": row["stock_qty"],
                     "reorder_level": row["reorder_level"],
-                    "description": row["description"],
+                    "description": safe(row["description"]),
                     "is_active": 1 if row["is_active"] else 0,
                 })
     except OSError as exc:

