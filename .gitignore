@@ -194,6 +194,10 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Trio review artifacts and per-test writable data.
+.trio/run/
+.test-artifacts/
+
 # PyPI configuration file
 .pypirc
 
