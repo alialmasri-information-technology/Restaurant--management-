@@ -140,11 +140,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          # A draft release never carries a real tag (GitHub calls it
-          # untagged-… until it is published), so the steps below must address
-          # the draft by the URL create prints, never by tag name — a lookup
-          # by tag finds nothing and 404s.
-          url=$(gh release create "$GITHUB_REF_NAME" --draft \
-            --title "RE4 $GITHUB_REF_NAME" --generate-notes)
-          gh release upload "$url" RE4.exe *.exe --clobber
-          gh release edit "$url" --draft=false
+          # Address the draft by its tag, not by the URL `create` prints.
+          # A draft's URL reads .../releases/tag/untagged-<hash>, which looks
+          # as though the tag were unusable and is why an earlier attempt fed
+          # that URL back in. `gh release upload` takes a tag and answers
+          # "release not found" for anything else, so it failed every time
+          # while the draft sat there half-built. A draft does resolve by tag:
+          # `gh release view "$GITHUB_REF_NAME"` finds it.
+          #
+          # The assets go on while it is still a draft, so the release only
+          # becomes visible to anyone once it is complete.
+          gh release create "$GITHUB_REF_NAME" --draft \
+            --title "RE4 $GITHUB_REF_NAME" --generate-notes
+          # Both artifacts land in the working directory, so one glob covers
+          # them; naming RE4.exe as well uploaded it twice.
+          gh release upload "$GITHUB_REF_NAME" *.exe --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false
