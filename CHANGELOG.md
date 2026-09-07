@@ -16,11 +16,11 @@ look at, and two ways the program complained about problems it did not have.
 punctuation should be.** Eight characters had been lost to a bad encoding, so
 the summary line under Gift cards read `12 card(s) <?> 9 active <?> the shop
 owes $340.00 on cards` — with the diamond in place of each `<?>` — both search
-boxes ended their prompt with the same mark, and every layaway with no due
-date showed one in the date column. Nothing was
-broken behind it — the figures were right and the cards worked — but a shop
-looking at that has every reason to think something is. The dots, dashes and
-ellipsis are back, matching the rest of the application.
+boxes ended their prompt with the same mark, and every layaway with no due date
+showed one in the date column. Nothing was broken behind it: the figures were
+right and the cards worked. But a shop looking at that has every reason to
+think something is. The dots, dashes and ellipsis are back, matching the rest
+of the application.
 
 Losing them again would be just as quiet, so it is now checked mechanically:
 the tests refuse any source file carrying a replacement character, and name
