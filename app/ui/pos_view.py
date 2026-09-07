@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import customtkinter as ctk
 
-from app import config
+from app import config, logs
 from app.money import ZERO, D, fmt_lbp, fmt_usd, parse_amount, to_lbp, usd
 from app.services import customers as customers_service
 from app.services import giftcards as giftcards_service
@@ -208,6 +208,9 @@ class PosView(ctk.CTkFrame):
             image = Image.open(path)
             thumbnail = ctk.CTkImage(light_image=image, dark_image=image, size=(56, 56))
         except Exception:  # noqa: BLE001 - a bad image is not worth an error dialog
+            # Quiet on screen, not quiet in the log: a missing thumbnail is a
+            # support question, and the answer is in the reason it failed.
+            logs.warning("Could not load the product image %s", path, exc_info=True)
             return None
         self._thumbnails[str(path)] = thumbnail
         return thumbnail

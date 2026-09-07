@@ -85,8 +85,13 @@ jobs:
       - run: pyinstaller RE4.spec --noconfirm
       # The installer is what a shop actually installs; the bare exe is the
       # artifact for people who know what a folder is.
+      # ';' would run iscc even if the install of Inno Setup had failed, and
+      # a release that quietly ships without its installer is worse than one
+      # that stops. Each command must succeed before the next is attempted.
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
       - name: Build the Windows installer
-        run: choco install innosetup -y --no-progress; iscc installer.iss
+        run: iscc installer.iss
       - uses: actions/upload-artifact@v4
         with:
           name: RE4-windows
@@ -96,7 +101,10 @@ jobs:
         with:
           name: RE4-windows-installer
           path: dist/installer/*.exe
-          if-no-files-found: ignore
+          # 'ignore' let a missing installer sail past the build and surface
+          # much later as a confusing download failure in the release job.
+          # If the installer is not there, say so here.
+          if-no-files-found: error
 
   release:
     name: Attach the build to a GitHub release
