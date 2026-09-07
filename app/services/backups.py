@@ -8,6 +8,7 @@ taken while the app is running is always internally consistent — a plain
 from __future__ import annotations
 
 import datetime as dt
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -140,14 +141,27 @@ def restore(backup_path) -> Path:
 
     live = db.database_path()
     db.close_connection()
+    # Copy in beside the live database and move it into place in one step.
+    # copyfile opens its destination for writing, which empties it before the
+    # first byte of the backup arrives -- so copying straight over the live
+    # file and then failing part way, on a disk filling up or a backup drive
+    # pulled out mid-copy, left the shop with no database at all. Under a
+    # message that read as though nothing had happened.
+    staged = live.with_name(live.name + ".restoring")
     try:
+        shutil.copyfile(backup_path, staged)
         # WAL sidecars belong to the old database; leaving them would corrupt
-        # the restored file.
+        # the restored file. Removed only now that the replacement is written
+        # and the step that remains cannot half-finish.
         for sidecar in (live.with_name(live.name + "-wal"), live.with_name(live.name + "-shm")):
             sidecar.unlink(missing_ok=True)
-        shutil.copyfile(backup_path, live)
+        os.replace(staged, live)
     except OSError as exc:
-        raise BackupError(f"Could not restore the backup: {exc}") from exc
+        staged.unlink(missing_ok=True)
+        raise BackupError(
+            f"Could not restore the backup: {exc}. The database was left as it "
+            f"was, and a copy of it is at {safety}."
+        ) from exc
     finally:
         db.get_connection()  # reopen against the file now in place
 
@@ -159,8 +173,12 @@ def restore(backup_path) -> Path:
 def _verify_restorable(path: Path) -> None:
     """Refuse anything that is not a healthy RE4 database."""
     try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    except sqlite3.Error as exc:
+        # as_uri percent-encodes the path. Pasting it in raw meant a folder
+        # named "shop#1" cut the URI short at the "#", so SQLite opened a
+        # different, empty file -- and the shop was told its perfectly good
+        # backup was missing users, products and sales.
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    except (sqlite3.Error, ValueError) as exc:
         raise BackupError(f"{path.name} is not a readable SQLite database.") from exc
     try:
         result = conn.execute("PRAGMA quick_check").fetchone()

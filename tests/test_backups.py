@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import time
 import unittest
+from unittest import mock
 
 from app import db
 from app.services import backups as service
@@ -183,6 +185,111 @@ class CheckpointTests(DatabaseTestCase):
 
     def test_foreign_key_problems_are_none_on_a_healthy_database(self):
         self.assertEqual(db.foreign_key_problems(), [])
+
+
+class InterruptedRestoreTests(DatabaseTestCase):
+    """A restore that fails must not be how the shop loses everything.
+
+    The copy used to go straight over the live database. copyfile opens its
+    destination for writing, which empties it before the first byte of the
+    backup arrives, so a copy that then failed -- a disk filling up, a backup
+    drive pulled out part way -- left no database at all. The message said
+    "Could not restore the backup", which reads as though nothing happened.
+    """
+
+    def disk_fills_up(self):
+        """Exactly what a full disk does: truncate, then fail to write."""
+        def copyfile(src, dst, **kwargs):
+            with open(dst, "wb") as handle:
+                handle.write(b"")
+            raise OSError(28, "No space left on device")
+
+        return mock.patch.object(service.shutil, "copyfile", copyfile)
+
+    def test_the_live_database_survives_a_copy_that_fails(self):
+        products_service.create_product(sku="S1", name="Widget", price_usd="10.00")
+        good = service.create("good")
+
+        with self.disk_fills_up(), self.assertRaises(service.BackupError):
+            service.restore(good)
+
+        self.assertIsNotNone(
+            products_service.get_by_sku("S1"),
+            "the shop's data was destroyed by a restore that did not happen",
+        )
+
+    def test_the_failure_says_where_the_safety_copy_is(self):
+        service.create("good")
+        good = service.create("good")
+        with self.disk_fills_up(), self.assertRaises(service.BackupError) as caught:
+            service.restore(good)
+        message = str(caught.exception)
+        self.assertIn("left as it was", message)
+        self.assertIn("before-restore", message)
+
+    def test_no_half_written_file_is_left_behind(self):
+        good = service.create("good")
+        with self.disk_fills_up(), self.assertRaises(service.BackupError):
+            service.restore(good)
+        leftovers = [p.name for p in self._tmp.iterdir() if "restoring" in p.name]
+        self.assertEqual(leftovers, [])
+
+    def test_a_restore_still_works_after_all_that(self):
+        """The guard must not have cost the feature."""
+        products_service.create_product(sku="S1", name="Widget", price_usd="10.00")
+        good = service.create("good")
+        products_service.create_product(sku="S2", name="Later", price_usd="1.00")
+
+        service.restore(good)
+
+        self.assertIsNotNone(products_service.get_by_sku("S1"))
+        self.assertIsNone(products_service.get_by_sku("S2"))
+
+
+class AwkwardPathTests(DatabaseTestCase):
+    """A folder name is not a URI, and was being pasted into one."""
+
+    def test_a_backup_under_a_folder_with_a_hash_is_still_readable(self):
+        """"file:C:/shop#1/re4.db" stops at the "#".
+
+        SQLite was handed a path that ended before the file, so it opened a
+        different and empty database -- and the shop was told a perfectly good
+        backup was missing users, products and sales, which is the most
+        alarming way to be wrong about it.
+        """
+        good = service.create("good")
+        awkward = self._tmp / "shop#1"
+        awkward.mkdir()
+        moved = awkward / good.name
+        shutil.copyfile(good, moved)
+
+        service._verify_restorable(moved)  # must not raise
+
+    def test_such_a_backup_can_actually_be_restored(self):
+        products_service.create_product(sku="S1", name="Widget", price_usd="10.00")
+        good = service.create("good")
+        awkward = self._tmp / "shop#1"
+        awkward.mkdir()
+        moved = awkward / good.name
+        shutil.copyfile(good, moved)
+        products_service.create_product(sku="S2", name="Later", price_usd="1.00")
+
+        service.restore(moved)
+
+        self.assertIsNotNone(products_service.get_by_sku("S1"))
+        self.assertIsNone(products_service.get_by_sku("S2"))
+
+    def test_reading_one_does_not_create_a_stray_file(self):
+        """The truncated URI had no mode=ro left on it, so SQLite made one."""
+        good = service.create("good")
+        awkward = self._tmp / "shop#1"
+        awkward.mkdir()
+        shutil.copyfile(good, awkward / good.name)
+        before = sorted(p.name for p in self._tmp.iterdir())
+
+        service._verify_restorable(awkward / good.name)
+
+        self.assertEqual(sorted(p.name for p in self._tmp.iterdir()), before)
 
 
 if __name__ == "__main__":
