@@ -519,7 +519,7 @@ class BriefingSmokeTests(DatabaseTestCase):
 
 
 class DebounceTests(DatabaseTestCase):
-    """A search box must query once, after the typing stops � not per letter."""
+    """A search box must query once, after the typing stops — not per letter."""
 
     opens_shift = False
 

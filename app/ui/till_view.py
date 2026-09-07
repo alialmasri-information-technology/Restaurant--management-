@@ -439,7 +439,7 @@ class GiftCardsModal(ctk.CTkToplevel):
         self.search_var.trace_add("write", widgets_debounce(self, 250, self.reload))
         ctk.CTkEntry(
             bar, textvariable=self.search_var, height=34,
-            placeholder_text="Search by code or note�",
+            placeholder_text="Search by code or note…",
         ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
 
         self.table = DataTable(
@@ -511,7 +511,7 @@ class GiftCardsModal(ctk.CTkToplevel):
         totals = giftcards_service.totals()
         self.summary_label.configure(
             text=(
-                f"{totals['cards']} card(s) � {totals['active']} active � "
+                f"{totals['cards']} card(s) · {totals['active']} active · "
                 f"the shop owes {fmt_usd(totals['liability_usd'])} on cards"
             )
         )
@@ -592,7 +592,7 @@ class GiftCardHistoryModal(ctk.CTkToplevel):
 
         SectionTitle(
             self,
-            f"{card['code']}  �  {fmt_usd(card['balance_usd'])} left of "
+            f"{card['code']}  ·  {fmt_usd(card['balance_usd'])} left of "
             f"{fmt_usd(card['initial_usd'])}",
         ).grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 8))
 
@@ -664,7 +664,7 @@ class LayawaysModal(ctk.CTkToplevel):
         self.search_var.trace_add("write", widgets_debounce(self, 250, self.reload))
         ctk.CTkEntry(
             bar, textvariable=self.search_var, height=34,
-            placeholder_text="Search by reference, customer or note�",
+            placeholder_text="Search by reference, customer or note…",
         ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.show_all = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
@@ -697,7 +697,7 @@ class LayawaysModal(ctk.CTkToplevel):
             )
         )
         self.table.set_formatter(
-            "due_date", lambda value, row: value or "�"
+            "due_date", lambda value, row: value or "—"
         )
 
         footer = ctk.CTkFrame(self, fg_color="transparent")
@@ -745,10 +745,10 @@ class LayawaysModal(ctk.CTkToplevel):
             empty_message="Nothing is set aside. Hold a cart on the New Sale screen.",
         )
         totals = layaways_service.summary()
-        overdue = f" � {totals['overdue']} past their date" if totals["overdue"] else ""
+        overdue = f" · {totals['overdue']} past their date" if totals["overdue"] else ""
         self.summary_label.configure(
             text=(
-                f"{totals['held']} held � {fmt_usd(totals['value_usd'])} still to come in"
+                f"{totals['held']} held · {fmt_usd(totals['value_usd'])} still to come in"
                 + overdue
             )
         )
