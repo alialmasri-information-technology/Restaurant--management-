@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import sqlite3
 
-from app import config, db
+from app import config, db, logs
 from app.money import ZERO, D, to_float, usd
 from app.services import accounts as accounts_service
 from app.services import audit
@@ -56,6 +56,15 @@ def next_return_no(conn: sqlite3.Connection) -> str:
         try:
             sequence = int(str(row["last"]).rsplit("-", 1)[1]) + 1
         except (ValueError, IndexError):
+            # The highest reference for today does not end in a number, so
+            # there is nothing to count on from. Starting again at 1 will
+            # collide with a reference that already exists and the UNIQUE
+            # column will refuse the write -- which is the right outcome, but
+            # the person at the counter sees only a database error. Say why.
+            logs.error(
+                "Reference %r does not end in a number; starting today again at 1",
+                row["last"],
+            )
             sequence = 1
     return f"{prefix}{sequence:04d}"
 

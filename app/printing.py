@@ -70,6 +70,9 @@ def default_printer() -> str:
         else:
             result = _run(["lpstat", "-d"])
     except (OSError, subprocess.SubprocessError):
+        # Its sibling above logs the same failure; a shop with no default
+        # printer set is a normal state, but the command falling over is not.
+        logs.warning("Could not ask the system for the default printer", exc_info=False)
         return ""
     if result.returncode != 0:
         return ""

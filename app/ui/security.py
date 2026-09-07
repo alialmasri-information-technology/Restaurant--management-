@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
-from app import auth, config
+from app import auth, config, logs
 from app.ui import theme
 from app.ui.widgets import Card, show_info
 
@@ -250,5 +250,10 @@ def idle_lock_seconds() -> int:
     try:
         minutes = int(str(settings_service.get("idle_lock_minutes")).strip() or 0)
     except (TypeError, ValueError):
+        # This decides when an unattended till locks itself. A shop that set it
+        # and is not getting it should not have to guess why.
+        logs.error(
+            "Setting 'idle_lock_minutes' is not a whole number; using the default"
+        )
         minutes = int(config.DEFAULT_SETTINGS["idle_lock_minutes"])
     return max(0, minutes) * 60

@@ -21,7 +21,7 @@ def acquire() -> bool:
     if _mutex is not None:  # this process already holds the door
         return True
 
-    from app import config
+    from app import config, logs
 
     if sys.platform.startswith("win"):
         import ctypes
@@ -42,6 +42,10 @@ def acquire() -> bool:
     try:
         handle = path.open("a+")
     except OSError:  # pragma: no cover - unwritable data dir fails later anyway
+        logs.warning(
+            "Could not open the lock file in %s, so a second copy of RE4 cannot "
+            "be detected", path.parent,
+        )
         return True
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)

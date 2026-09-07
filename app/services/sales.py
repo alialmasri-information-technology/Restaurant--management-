@@ -8,7 +8,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from app import config, db
+from app import config, db, logs
 from app.money import ZERO, D, compute_totals, to_float, usd
 from app.money import line_total as compute_line_total
 from app.services import accounts as accounts_service
@@ -319,6 +319,15 @@ def next_invoice_no(conn: sqlite3.Connection) -> str:
         try:
             sequence = int(str(row["last"]).rsplit("-", 1)[1]) + 1
         except (ValueError, IndexError):
+            # The highest reference for today does not end in a number, so
+            # there is nothing to count on from. Starting again at 1 will
+            # collide with a reference that already exists and the UNIQUE
+            # column will refuse the write -- which is the right outcome, but
+            # the person at the counter sees only a database error. Say why.
+            logs.error(
+                "Reference %r does not end in a number; starting today again at 1",
+                row["last"],
+            )
             sequence = 1
     return f"{prefix}{sequence:04d}"
 

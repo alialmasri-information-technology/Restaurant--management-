@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app import config, db
+from app import config, db, logs
 from app.money import D
 
 
@@ -45,9 +45,22 @@ def set_many(values: dict) -> None:
 
 
 def _decimal(key: str, fallback: str) -> Decimal:
+    """A number from the settings table, or the default if it cannot be read.
+
+    Falling back is right - a corrupt row must not stop the shop trading - but
+    it must not happen quietly. The exchange rate lives here: a shop silently
+    pricing in LBP at the built-in default because its own rate would not parse
+    is a money bug that shows up as an argument at the counter, not as an
+    error. Whoever gets that support call needs the reason in the log.
+    """
+    raw = get(key, fallback)
     try:
-        return D(get(key, fallback))
+        return D(raw)
     except Exception:  # noqa: BLE001 - a corrupt setting must not break the till
+        logs.error(
+            "Setting %r is %r, which is not a number; using %r instead",
+            key, raw, fallback,
+        )
         return D(fallback)
 
 
@@ -103,9 +116,11 @@ def backup_on_close() -> bool:
 
 
 def backup_keep() -> int:
+    fallback = config.DEFAULT_SETTINGS["backup_keep"]
     try:
-        return max(1, int(_decimal("backup_keep", config.DEFAULT_SETTINGS["backup_keep"])))
-    except Exception:  # noqa: BLE001
+        return max(1, int(_decimal("backup_keep", fallback)))
+    except Exception:  # noqa: BLE001 - keeping backups matters more than the count
+        logs.error("Setting 'backup_keep' could not be read; keeping 20 backups")
         return 20
 
 
@@ -130,9 +145,16 @@ def inventory_keep_days() -> int:
 
 
 def _keep_days(key: str) -> int:
+    """A retention in days. Unreadable means 0, which deletes nothing.
+
+    Erring towards keeping records is the safe direction, so the fallback
+    stands - but a shop that set a retention and is not getting it deserves
+    better than silence.
+    """
     try:
         return max(0, int(_decimal(key, config.DEFAULT_SETTINGS.get(key, "0"))))
     except Exception:  # noqa: BLE001 - a bad setting must not stop start-up
+        logs.error("Setting %r could not be read; keeping those records for ever", key)
         return 0
 
 

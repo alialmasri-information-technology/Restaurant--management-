@@ -28,7 +28,7 @@ import os
 import sqlite3
 from dataclasses import dataclass
 
-from app import config, db
+from app import config, db, logs
 from app.services import audit
 
 ALGORITHM = "pbkdf2_sha256"
@@ -89,6 +89,11 @@ def verify_password(password: str, stored: str) -> bool:
             "sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations)
         )
     except (ValueError, AttributeError):
+        # Refusing is the only safe answer to a hash we cannot read, but an
+        # administrator locked out by a damaged row would otherwise just see a
+        # password that "stopped working". The reason belongs in the log; the
+        # password and the stored hash never do.
+        logs.error("A stored password hash is unreadable, so sign-in was refused")
         return False
     return hmac.compare_digest(digest.hex(), digest_hex)
 
@@ -172,6 +177,13 @@ def _parse_time(value) -> dt.datetime | None:
     try:
         return dt.datetime.strptime(str(value)[:19], _TIME_FORMAT)
     except ValueError:
+        # This feeds lockout_remaining, which reads None as "not locked". A
+        # timestamp nobody can parse therefore switches the sign-in lockout off
+        # for that account, which is exactly the kind of thing that must never
+        # happen quietly.
+        logs.error(
+            "Could not read the stored time %r; treating it as unset", value
+        )
         return None
 
 
@@ -183,6 +195,9 @@ def _policy() -> tuple[int, int]:
         try:
             return max(0, int(str(settings_service.get(key)).strip() or 0))
         except (TypeError, ValueError):
+            logs.error(
+                "Setting %r is not a whole number; using the built-in default", key
+            )
             return int(config.DEFAULT_SETTINGS[key])
 
     return read("login_max_attempts"), read("login_lockout_minutes")

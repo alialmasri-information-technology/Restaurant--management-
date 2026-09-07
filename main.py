@@ -241,11 +241,17 @@ def main(argv=None) -> int:
 
         os.environ["RE4_DATA_DIR"] = args.data_dir
 
-    from app import db
+    from app import db, logs
 
     # Every command below needs a database, and init_db is idempotent.
     if (args.reset_admin or args.unlock or args.check or args.backup
             or args.day_report):
+        # Only the user interface used to set logging up, so everything below
+        # ran with an unconfigured logger and wrote nothing to re4.log. These
+        # are the commands somebody reaches for when the shop is already in
+        # trouble -- a backup before a risky change, a check after a power cut
+        # -- and they are the last place a silent run is acceptable.
+        logs.setup()
         db.init_db()
 
     if args.reset_admin:
