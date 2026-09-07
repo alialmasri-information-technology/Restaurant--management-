@@ -17,21 +17,34 @@ from app.ui.widgets import ask_confirm, show_error, show_info
 
 
 def open_file(path: Path) -> None:
-    """Hand the file to whatever the OS uses to view PDFs."""
+    """Hand the file to whatever the OS uses to view PDFs.
+
+    ``open`` and ``xdg-open`` report a failure by returning non-zero, not by
+    raising, so ``check=False`` used to swallow it whole: on a Mac or a Linux
+    machine a receipt that would not open did nothing at all -- no viewer, no
+    fall back to the browser, no line in the log, just a button that appeared
+    to do nothing. The return code is now treated the same way an exception
+    is, which is what it means.
+    """
     path = Path(path)
+    reason = None
     try:
         if sys.platform.startswith("win"):
             # Our own generated PDF, never a path typed by anyone.
             os.startfile(str(path))
-        elif sys.platform == "darwin":
-            subprocess.run(["open", str(path)], check=False)
         else:
-            subprocess.run(["xdg-open", str(path)], check=False)
-    except Exception:  # noqa: BLE001 - fall back to the browser's PDF viewer
+            opener = "open" if sys.platform == "darwin" else "xdg-open"
+            result = subprocess.run([opener, str(path)], check=False)
+            if result.returncode != 0:
+                reason = f"{opener} exited with {result.returncode}"
+    except Exception as exc:  # noqa: BLE001 - fall back to the browser's PDF viewer
+        reason = str(exc)
+
+    if reason is not None:
         # The browser is a fair second choice, but if the desktop could not
         # open its own PDF that is worth knowing when someone reports that
         # receipts "open in the wrong place".
-        logs.warning("Could not open %s with the desktop viewer", path, exc_info=True)
+        logs.warning("Could not open %s with the desktop viewer: %s", path, reason)
         webbrowser.open(path.as_uri())
 
 

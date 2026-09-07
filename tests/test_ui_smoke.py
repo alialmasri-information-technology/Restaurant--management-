@@ -13,6 +13,7 @@ nothing there and catches the regression on a developer's machine.
 
 from __future__ import annotations
 
+import os
 import time
 import unittest
 
@@ -44,6 +45,27 @@ def _display_available() -> bool:
 
 
 HAS_DISPLAY = _display_available()
+
+
+class DisplayPromiseTests(unittest.TestCase):
+    """The screens are only covered where Tk can open a window.
+
+    Every UI class below skips itself when there is no display, which is right
+    on a machine that has none -- and dangerous on a machine that is supposed
+    to. CI installs xvfb precisely so these run; if that ever stopped working
+    the whole set would quietly vanish and the run would still be green,
+    reporting success for tests that never executed. Setting
+    RE4_REQUIRE_DISPLAY turns that silence into a failure.
+    """
+
+    def test_a_promised_display_is_really_there(self):
+        if not os.environ.get("RE4_REQUIRE_DISPLAY"):
+            self.skipTest("no display was promised, so skipping is honest here")
+        self.assertTrue(
+            HAS_DISPLAY,
+            "RE4_REQUIRE_DISPLAY is set, so Tk was expected to open a window and "
+            "could not - every screen test would have skipped in silence.",
+        )
 
 
 def _tear_down(root) -> None:
