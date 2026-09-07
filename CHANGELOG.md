@@ -5,7 +5,7 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
-## [Unreleased]
+## [2.7.0] — 2026-09-07
 
 No schema change. The shop behaves as it did; it stops slowing down as its
 records pile up.

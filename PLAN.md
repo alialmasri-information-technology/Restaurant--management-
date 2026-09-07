@@ -93,4 +93,5 @@ Work proceeds in phases; each one ends with the full test suite and ruff green.
   and typing after a pause must run it again~~ — done.
 - ~~CI builds the exe *and* the installer on every tag and attaches both to a
   GitHub release with generated notes~~ — done (`release` job).
-- Version 2.5.0 with a CHANGELOG entry in the repository's voice.
+- ~~Every release carries a CHANGELOG entry in the repository's voice~~ —
+  done, up to and including 2.7.0.
