@@ -104,19 +104,25 @@ def print_file(path, printer_name: str = "") -> str:
 
 def _print_windows(path: Path, printer_name: str) -> str:
     if printer_name:
-        # "PrintTo" is registered by every mainstream PDF reader.
-        command = [
-            "powershell", "-NoProfile", "-Command",
-            "Start-Process -FilePath $args[0] -Verb PrintTo -ArgumentList $args[1]",
-            str(path), printer_name,
-        ]
-        result = _run(command, timeout=30)
-        if result.returncode == 0:
+        # "PrintTo" is registered by every mainstream PDF reader, and this asks
+        # the shell for it directly. It used to go through PowerShell instead,
+        # with the file and the printer left as automatic-argument variables
+        # for powershell.exe to fill in -- which -Command does not do. It joins
+        # whatever follows onto the command text and parses the result, so both
+        # arrived empty: Start-Process got a null FilePath, failed every time,
+        # and every job fell through to the default printer below while the
+        # status line said otherwise. The chosen printer had never once been
+        # used. Joining also meant the name was parsed rather than passed, so
+        # a printer could be named something the shop's shell would run. A test
+        # reads this file to keep that construction out.
+        try:
+            os.startfile(str(path), "printto", _shell_argument(printer_name))
+        except OSError as exc:
+            # Nothing registered the verb, or the reader refused the job. The
+            # default printer below is a better answer than no receipt.
+            logs.warning("PrintTo failed for %s on %s: %s", path, printer_name, exc)
+        else:
             return f"Sent to {printer_name}."
-        logs.warning(
-            "PrintTo failed for %s on %s: %s", path, printer_name,
-            (result.stderr or "").strip(),
-        )
 
     try:
         # The path is a PDF this application generated, never user input.
@@ -130,6 +136,17 @@ def _print_windows(path: Path, printer_name: str) -> str:
         f"'{printer_name}' could not be targeted directly, so the job went to the "
         f"default printer."
     )
+
+
+def _shell_argument(value: str) -> str:
+    """Quote one value for ShellExecute, which is handed a command line.
+
+    The receiving reader splits that line itself, so a printer name with a
+    space in it ("Front Counter", and most of them) has to arrive quoted. A
+    quote inside the name would end the quoting early, and no printer needs
+    one, so it is dropped rather than escaped.
+    """
+    return '"' + value.replace('"', "") + '"'
 
 
 def _print_unix(path: Path, printer_name: str) -> str:
