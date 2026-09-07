@@ -566,6 +566,68 @@ class DebounceTests(DatabaseTestCase):
         self.assertEqual(len(calls), 2)
 
 
+@unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
+class BackgroundPumpTests(DatabaseTestCase):
+    """Finished background work has to reach whichever window is open now."""
+
+    opens_shift = False
+
+    def setUp(self) -> None:
+        super().setUp()
+        from app.ui import background
+
+        self.background = background
+        # Module-level state: leave it exactly as it was found, or every later
+        # test inherits a pump pointed at a window this one destroyed.
+        original = background._pump_widget
+        self.addCleanup(setattr, background, "_pump_widget", original)
+        self.addCleanup(background._discard_outcomes)
+
+    def _settle(self, condition, seconds: float = 5.0) -> bool:
+        deadline = time.monotonic() + seconds
+        while not condition() and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.005)
+        return condition()
+
+    def test_a_second_window_gets_a_working_pump(self):
+        """The first window's pump stops with it; the next one needs its own.
+
+        This used to be a flag that was set once and never cleared, so the
+        second window was told a pump was already running when none was. Every
+        job after that kept its busy cursor and never called back -- no error
+        anywhere, just a button that had apparently done nothing.
+        """
+        first = ctk.CTk()
+        first.withdraw()
+        self.background.start(first)
+        destroy_tk_root(first)
+
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(lambda: destroy_tk_root(self.root))
+        self.background.start(self.root)
+        self.assertIs(self.background._pump_widget, self.root)
+
+        delivered = []
+        self.background.run(lambda: "done", delivered.append)
+        self.assertTrue(
+            self._settle(lambda: bool(delivered)),
+            "the outcome never crossed back to the second window",
+        )
+        self.assertEqual(delivered, ["done"])
+
+    def test_starting_twice_on_the_same_window_pumps_once(self):
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(lambda: destroy_tk_root(self.root))
+
+        self.background.start(self.root)
+        before = len(self.root.tk.call("after", "info"))
+        self.background.start(self.root)
+        self.assertEqual(len(self.root.tk.call("after", "info")), before)
+
+
 def _ui_modules():
     """Every app.ui module, imported, so their classes can be inspected."""
     import importlib

@@ -1,12 +1,12 @@
-"""One worker thread for the jobs that must not freeze the shop.
+"""Worker threads for the jobs that must not freeze the shop.
 
 Tk repaints only between callbacks, so anything long-running done inside a
 button press — a conversation with a printer that is asleep, a backup of a
 database grown over years, PowerShell waking up to list printers — leaves the
-window grey and the till dead for as long as it takes. The jobs here run on a
-single daemon thread and hand their outcome back through a queue, which the
-event loop drains a hundred times a second; the shop keeps answering the
-scanner while the printer thinks.
+window grey and the till dead for as long as it takes. Each job here gets its
+own short-lived daemon thread and hands its outcome back through a queue,
+which the event loop drains a hundred times a second; the shop keeps answering
+the scanner while the printer thinks.
 
 Two boundaries keep this safe:
 
@@ -18,6 +18,10 @@ Two boundaries keep this safe:
   Restoring a backup closes and reopens the caller's connection, which is
   thread-local by design; restore therefore stays on the UI thread, brief as
   it is.
+
+Two jobs can therefore be in flight at once, each with its own connection.
+That is safe rather than merely unlikely: the database runs in WAL mode with a
+five-second busy timeout, so a second writer waits its turn instead of failing.
 """
 
 from __future__ import annotations
@@ -36,15 +40,23 @@ POLL_MS = 100
 BUSY_CURSOR = "watch"
 
 _outcomes: queue.Queue = queue.Queue()
-_pumping = False
+
+#: The widget currently being pumped, or None. This used to be a plain "are we
+#: pumping yet" flag that was set once and never cleared, which was true only
+#: for as long as the first window lived. The pump stops when its window goes,
+#: so the flag then said a pump was running when none was: a second window
+#: called start(), was turned away, and every job after that kept its busy
+#: cursor for ever and never called back. Holding the widget rather than a
+#: boolean is what lets the next window start a pump of its own.
+_pump_widget = None
 
 
 def start(widget) -> None:
     """Begin draining finished work onto ``widget``'s event loop."""
-    global _pumping
-    if _pumping:
+    global _pump_widget
+    if _pump_widget is widget:
         return
-    _pumping = True
+    _pump_widget = widget
     _pump(widget)
 
 
@@ -89,6 +101,9 @@ def run(job, on_done=None, on_error=None, *, parent=None) -> None:
 
 
 def _pump(widget) -> None:
+    global _pump_widget
+    if widget is not _pump_widget:
+        return  # a newer window has taken over, or everything has shut down
     while True:
         try:
             handler = _outcomes.get_nowait()
@@ -100,8 +115,24 @@ def _pump(widget) -> None:
             logs.exception("Background delivery failed")
     try:
         widget.after(POLL_MS, lambda: _pump(widget))
-    except tk.TclError:  # the window is gone; there is nothing left to deliver
-        pass
+    except tk.TclError:
+        # The window is gone. Let go of it, so a later one can start a pump of
+        # its own, and drop the outcomes still waiting: every one of them is a
+        # callback into widgets that went with it.
+        _pump_widget = None
+        _discard_outcomes()
+
+
+def _discard_outcomes() -> None:
+    dropped = 0
+    while True:
+        try:
+            _outcomes.get_nowait()
+        except queue.Empty:
+            break
+        dropped += 1
+    if dropped:
+        logs.info("Dropped %d background result(s) for a window that closed", dropped)
 
 
 def _ignore(_result) -> None:
