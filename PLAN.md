@@ -94,4 +94,4 @@ Work proceeds in phases; each one ends with the full test suite and ruff green.
 - ~~CI builds the exe *and* the installer on every tag and attaches both to a
   GitHub release with generated notes~~ — done (`release` job).
 - ~~Every release carries a CHANGELOG entry in the repository's voice~~ —
-  done, up to and including 2.7.0.
+  done, up to and including 2.7.1.

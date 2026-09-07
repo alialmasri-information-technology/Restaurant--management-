@@ -5,6 +5,44 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [2.7.1] — 2026-09-07
+
+No schema change, and nothing to relearn. One thing on screen was wrong to
+look at, and two ways the program complained about problems it did not have.
+
+### Fixed
+
+**The Gift cards and Layaways screens showed a black diamond where the
+punctuation should be.** Eight characters had been lost to a bad encoding, so
+the summary line under Gift cards read `12 card(s) <?> 9 active <?> the shop
+owes $340.00 on cards` — with the diamond in place of each `<?>` — both search
+boxes ended their prompt with the same mark, and every layaway with no due
+date showed one in the date column. Nothing was
+broken behind it — the figures were right and the cards worked — but a shop
+looking at that has every reason to think something is. The dots, dashes and
+ellipsis are back, matching the rest of the application.
+
+Losing them again would be just as quiet, so it is now checked mechanically:
+the tests refuse any source file carrying a replacement character, and name
+the file and the line.
+
+**A modal closed within a tenth of a second no longer reports an error.**
+Every dialog claims the keyboard 80 milliseconds after it opens, which is long
+enough for the window manager to have finished with it. Closing the dialog
+before that moment left the appointment standing with nothing to keep it, and
+the program wrote `invalid command name` to its output. Harmless, invisible in
+the installed build, and exactly the kind of false alarm that teaches people to
+skip past the real ones. The dialog now cancels its own appointment on the way
+out.
+
+### Tests
+
+The test run printed seventeen of those same false alarms, from screens that
+were torn down while the toolkit still had deferred work queued on them. The
+teardown that the screen tests already used now lives in `tests/support.py`
+where every Tk test can reach it, and the run is silent. A test suite whose
+output is expected to contain errors is a test suite nobody reads.
+
 ## [2.7.0] — 2026-09-07
 
 No schema change. The shop behaves as it did; it stops slowing down as its
