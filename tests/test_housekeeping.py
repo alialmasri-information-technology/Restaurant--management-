@@ -176,3 +176,23 @@ class ReceiptHousekeepingTests(DatabaseTestCase):
         housekeeping.tidy()
         self.assertFalse(old.exists())
         self.assertTrue(new.exists())
+
+    def test_only_what_this_application_wrote_is_swept(self):
+        """The Settings screen shows the shop this folder, so they open it.
+
+        Everything RE4 puts here is a PDF -- receipts, refunds, X and Z
+        reports, day sheets, label sheets. Sweeping the folder rather than our
+        own files took a scan, a supplier's invoice or a note left there with
+        them, which is exactly the side effect this module opens by promising
+        not to have.
+        """
+        settings_service.set_value("receipt_keep_days", "30")
+        ours = self._receipt("INV-20200101-0001.pdf", days_ago=60)
+        theirs = self._receipt("supplier-invoice-scan.jpg", days_ago=60)
+        notes = self._receipt("what the accountant asked for.txt", days_ago=400)
+
+        housekeeping.tidy()
+
+        self.assertFalse(ours.exists(), "our own old receipt should have gone")
+        self.assertTrue(theirs.exists(), "a file the shop put here was deleted")
+        self.assertTrue(notes.exists(), "a file the shop put here was deleted")

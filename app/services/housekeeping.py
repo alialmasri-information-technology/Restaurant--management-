@@ -115,7 +115,13 @@ def _clear_old_receipts() -> int:
         return 0
     cutoff = (dt.datetime.now() - dt.timedelta(days=days)).timestamp()
     removed = 0
-    for path in Path(config.RECEIPTS_DIR).glob("*"):
+    # Only the PDFs this application wrote. Everything it puts here is one --
+    # receipts, refunds, X and Z reports, day sheets, label sheets -- and the
+    # Settings screen shows the shop where the folder is, so it is somewhere a
+    # shopkeeper opens and may well keep something of their own. Sweeping the
+    # folder rather than our own files would delete that, which is the side
+    # effect this module opens by saying it will not have.
+    for path in Path(config.RECEIPTS_DIR).glob("*.pdf"):
         try:
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()
