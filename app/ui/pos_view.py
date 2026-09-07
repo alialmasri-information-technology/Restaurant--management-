@@ -1083,14 +1083,6 @@ class KeysModal(Modal):
             self, text="Close", height=36, width=120, command=self.on_cancel
         ).grid(row=len(self.SHORTCUTS) + 1, columnspan=2, pady=(14, 16))
 
-        self.bind("<Escape>", lambda _event: self.on_cancel())
-        self.after(80, self._grab)
-
-    def _grab(self) -> None:
-        if not self.winfo_exists():
-            return
-        try:
-            self.grab_set()
-            self.focus_force()
-        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
-            pass
+        # Escape and the keyboard grab both come from Modal. This class used to
+        # repeat them, and the second grab it scheduled was one the inherited
+        # cleanup knew nothing about and so could not cancel.

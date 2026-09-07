@@ -566,6 +566,19 @@ class DebounceTests(DatabaseTestCase):
         self.assertEqual(len(calls), 2)
 
 
+def _ui_modules():
+    """Every app.ui module, imported, so their classes can be inspected."""
+    import importlib
+    import pkgutil
+
+    import app.ui
+
+    modules = []
+    for info in pkgutil.iter_modules(app.ui.__path__):
+        modules.append(importlib.import_module(f"app.ui.{info.name}"))
+    return modules
+
+
 @unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
 class ModalTeardownTests(DatabaseTestCase):
     """A modal that is closed at once must not leave a timer pointing at it."""
@@ -577,6 +590,70 @@ class ModalTeardownTests(DatabaseTestCase):
         self.root = ctk.CTk()
         self.root.withdraw()
         self.addCleanup(lambda: destroy_tk_root(self.root))
+
+    def test_no_dialog_writes_its_own_grab(self):
+        """Six of them once did, and fixing one reached none of the others.
+
+        A dialog that hand-rolls the grab gets the deferred callback without
+        the cancellation, which is the bug this mixin exists to hold shut. A
+        window that genuinely should not take the keyboard is free to say
+        nothing at all; what it may not do is write its own.
+        """
+        from app.ui import widgets
+
+        offenders = []
+        for module in _ui_modules():
+            for name, obj in vars(module).items():
+                if not isinstance(obj, type) or not issubclass(obj, ctk.CTkToplevel):
+                    continue
+                if obj.__module__ != module.__name__:
+                    continue  # imported, not declared here
+                if "_grab" in vars(obj) or "claim_keyboard" in vars(obj):
+                    offenders.append(f"{module.__name__}.{name}")
+
+        self.assertEqual(
+            offenders,
+            [],
+            "these define their own keyboard grab instead of mixing in "
+            f"widgets.GrabsKeyboard: {', '.join(offenders)}",
+        )
+        # And the mixin really is reaching them, rather than everyone having
+        # quietly stopped grabbing at all.
+        users = [
+            f"{module.__name__}.{name}"
+            for module in _ui_modules()
+            for name, obj in vars(module).items()
+            if isinstance(obj, type)
+            and issubclass(obj, ctk.CTkToplevel)
+            and obj.__module__ == module.__name__
+            and issubclass(obj, widgets.GrabsKeyboard)
+        ]
+        self.assertGreaterEqual(len(users), 5, f"only {users} mix it in")
+
+    def test_the_mixin_cancels_the_grab_for_any_window(self):
+        """Proved on the mixin itself, not only through Modal."""
+        from app.ui import widgets
+
+        class BareDialog(widgets.GrabsKeyboard, ctk.CTkToplevel):
+            pass
+
+        dialog = BareDialog(self.root)
+        dialog.claim_keyboard()
+        job = dialog._grab_job
+        self.assertIsNotNone(job)
+        self.assertIn(job, self.root.tk.call("after", "info"))
+
+        dialog.destroy()
+        self.assertNotIn(job, self.root.tk.call("after", "info"))
+
+    def test_a_window_that_never_grabbed_still_destroys(self):
+        """The job is held on the class, so an untouched window reads None."""
+        from app.ui import widgets
+
+        class BareDialog(widgets.GrabsKeyboard, ctk.CTkToplevel):
+            pass
+
+        BareDialog(self.root).destroy()  # must not raise
 
     def test_dismissing_a_modal_cancels_its_pending_grab(self):
         """Otherwise Tcl reaches a callback whose command destroy() deleted.

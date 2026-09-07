@@ -15,6 +15,7 @@ from app.ui.widgets import (
     Card,
     DataTable,
     FormModal,
+    GrabsKeyboard,
     SectionTitle,
     StatCard,
     ask_confirm,
@@ -410,7 +411,7 @@ class TillView(ctk.CTkFrame):
         receipt_actions.print_shift_report(self, shift_id, kind=kind)
 
 
-class GiftCardsModal(ctk.CTkToplevel):
+class GiftCardsModal(GrabsKeyboard, ctk.CTkToplevel):
     """What the shop owes on cards, and which one paid for what."""
 
     def __init__(self, parent, user):
@@ -491,17 +492,8 @@ class GiftCardsModal(ctk.CTkToplevel):
         ).grid(row=0, column=3, padx=(8, 0))
 
         self.bind("<Escape>", lambda _event: self.destroy())
-        self.after(80, self._grab)
+        self.claim_keyboard()
         self.reload()
-
-    def _grab(self) -> None:
-        if not self.winfo_exists():
-            return
-        try:
-            self.grab_set()
-            self.focus_force()
-        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
-            pass
 
     def reload(self) -> None:
         self.table.set_rows(
@@ -577,7 +569,7 @@ class GiftCardsModal(ctk.CTkToplevel):
         self.reload()
 
 
-class GiftCardHistoryModal(ctk.CTkToplevel):
+class GiftCardHistoryModal(GrabsKeyboard, ctk.CTkToplevel):
     """One card's movements, newest first."""
 
     def __init__(self, parent, card):
@@ -623,19 +615,10 @@ class GiftCardHistoryModal(ctk.CTkToplevel):
             command=self.destroy,
         ).grid(row=2, column=1, sticky="e", padx=18, pady=(0, 16))
         self.bind("<Escape>", lambda _event: self.destroy())
-        self.after(80, self._grab)
-
-    def _grab(self) -> None:
-        if not self.winfo_exists():
-            return
-        try:
-            self.grab_set()
-            self.focus_force()
-        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
-            pass
+        self.claim_keyboard()
 
 
-class LayawaysModal(ctk.CTkToplevel):
+class LayawaysModal(GrabsKeyboard, ctk.CTkToplevel):
     """Goods set aside and the money still owed on them."""
 
     def __init__(self, parent, user):
@@ -720,17 +703,8 @@ class LayawaysModal(ctk.CTkToplevel):
         ).grid(row=0, column=2, padx=(8, 0))
 
         self.bind("<Escape>", lambda _event: self.destroy())
-        self.after(80, self._grab)
+        self.claim_keyboard()
         self.reload()
-
-    def _grab(self) -> None:
-        if not self.winfo_exists():
-            return
-        try:
-            self.grab_set()
-            self.focus_force()
-        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
-            pass
 
     def reload(self) -> None:
         rows = [

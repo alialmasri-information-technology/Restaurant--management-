@@ -330,17 +330,61 @@ class LabeledEntry(ctk.CTkFrame):
 # Modal dialogs
 # --------------------------------------------------------------------------- #
 
-class Modal(ctk.CTkToplevel):
+class GrabsKeyboard:
+    """Claims the keyboard shortly after a window appears, and lets go cleanly.
+
+    Mix in before the Tk base class. Six dialogs across four modules had each
+    written this out by hand, so a fix to one reached none of the others.
+
+    Grabbing the moment the window is created races the window manager on
+    Windows, so it is deferred. Deferring it means the window can be closed
+    before it fires, and that is where the care is needed: ``destroy`` deletes
+    the Tcl command behind the callback but leaves the timer standing, so Tcl
+    keeps the appointment, finds nothing there, and writes "invalid command
+    name" to stderr. Nothing breaks, and in a windowed build nobody sees it --
+    which is the trouble, because a genuine Tk error looks exactly the same.
+
+    It also means the ``winfo_exists`` check below can never be what saves us:
+    by the time the window is gone, so is the command, and Tcl never reaches
+    Python to ask. Cancelling on the way out is what the check was reaching
+    for; it is kept only for a caller that invokes :meth:`_grab` directly.
+    """
+
+    #: Held on the class so a window whose __init__ raises part-way through
+    #: still answers destroy() -- it is in its parent's children by then, and
+    #: destroying the parent will call it.
+    _grab_job: str | None = None
+
+    def claim_keyboard(self, delay_ms: int = 80) -> None:
+        self._grab_job = self.after(delay_ms, self._grab)
+
+    def _grab(self) -> None:
+        self._grab_job = None
+        if not self.winfo_exists():
+            return  # closed before the grab fired
+        try:
+            self.grab_set()
+            self.focus_force()
+        except tk.TclError:  # pragma: no cover - window already gone
+            pass
+
+    def destroy(self) -> None:
+        if self._grab_job is not None:
+            try:
+                self.after_cancel(self._grab_job)
+            except tk.TclError:  # pragma: no cover - fired a moment ago
+                pass
+            self._grab_job = None
+        super().destroy()
+
+
+class Modal(GrabsKeyboard, ctk.CTkToplevel):
     """Base modal: centred on its parent, application-modal, Esc to cancel."""
 
     def __init__(self, parent, title: str, width: int = 460, height: int = 420):
         super().__init__(parent)
         self.title(title)
         self.result = None
-        # Set before anything below can raise: a half-built modal is still in
-        # its parent's children, so destroying the parent will still call
-        # destroy() on it, and that reads this attribute.
-        self._grab_job: str | None = None
         self.configure(fg_color=theme.BG)
         self.resizable(False, False)
         self.transient(parent.winfo_toplevel())
@@ -355,36 +399,7 @@ class Modal(ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self.on_cancel)
         self.bind("<Escape>", lambda _event: self.on_cancel())
 
-        # Grabbing too early races the window manager on Windows.
-        self._grab_job = self.after(80, self._grab)
-
-    def _grab(self) -> None:
-        self._grab_job = None
-        if not self.winfo_exists():
-            return  # closed before the grab fired
-        try:
-            self.grab_set()
-            self.focus_force()
-        except tk.TclError:  # pragma: no cover - window already gone
-            pass
-
-    def destroy(self) -> None:
-        """Cancel the pending grab before the window goes.
-
-        ``destroy`` deletes the Tcl command behind :meth:`_grab` but leaves its
-        timer running, so a modal dismissed inside the 80ms lands Tcl on a
-        callback that no longer exists and it prints "invalid command name" to
-        stderr. Nothing breaks, and nothing is visible in a windowed build --
-        but it is a real error report for something that is not an error, and
-        those teach people to ignore the ones that are.
-        """
-        if self._grab_job is not None:
-            try:
-                self.after_cancel(self._grab_job)
-            except tk.TclError:  # pragma: no cover - fired a moment ago
-                pass
-            self._grab_job = None
-        super().destroy()
+        self.claim_keyboard()
 
     def on_cancel(self) -> None:
         self.result = None

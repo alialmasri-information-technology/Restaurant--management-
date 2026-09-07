@@ -19,6 +19,7 @@ from app.ui.widgets import (
     Card,
     DataTable,
     FormModal,
+    GrabsKeyboard,
     SectionTitle,
     StatCard,
     ask_confirm,
@@ -492,7 +493,7 @@ def _line_tag(row) -> str:
     return ""
 
 
-class HistoryModal(ctk.CTkToplevel):
+class HistoryModal(GrabsKeyboard, ctk.CTkToplevel):
     """Past counts, so a run of shrinkage in one aisle is visible over time."""
 
     def __init__(self, parent):
@@ -548,13 +549,4 @@ class HistoryModal(ctk.CTkToplevel):
         ).grid(row=2, column=0, sticky="e", padx=20, pady=(0, 18))
 
         self.bind("<Escape>", lambda _event: self.destroy())
-        self.after(80, self._grab)
-
-    def _grab(self) -> None:
-        if not self.winfo_exists():
-            return
-        try:
-            self.grab_set()
-            self.focus_force()
-        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
-            pass
+        self.claim_keyboard()

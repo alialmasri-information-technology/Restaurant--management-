@@ -12,7 +12,7 @@ import customtkinter as ctk
 
 from app import auth, config, logs
 from app.ui import theme
-from app.ui.widgets import Card, show_info
+from app.ui.widgets import Card, GrabsKeyboard, show_info
 
 
 class LockScreen(ctk.CTkFrame):
@@ -94,7 +94,7 @@ class LockScreen(ctk.CTkFrame):
         self.entry.focus_set()
 
 
-class ForcedPasswordChange(ctk.CTkToplevel):
+class ForcedPasswordChange(GrabsKeyboard, ctk.CTkToplevel):
     """Blocks the app until a real password replaces a temporary one.
 
     Deliberately not cancellable: closing it signs the operator out rather than
@@ -195,18 +195,9 @@ class ForcedPasswordChange(ctk.CTkToplevel):
         ).grid(row=0, column=2)
 
         self.protocol("WM_DELETE_WINDOW", self.abandon)
-        self.after(80, self._grab)
+        self.claim_keyboard()
         if first_entry is not None:
             self.after(140, lambda: first_entry.winfo_exists() and first_entry.focus_set())
-
-    def _grab(self) -> None:
-        if not self.winfo_exists():
-            return
-        try:
-            self.grab_set()
-            self.focus_force()
-        except Exception:  # noqa: BLE001  # pragma: no cover - window gone
-            pass
 
     def submit(self) -> None:
         self.message.configure(text="")
