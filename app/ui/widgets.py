@@ -8,6 +8,7 @@ from tkinter import messagebox, ttk
 import customtkinter as ctk
 
 from app.ui import theme
+from app.ui.phrasing import truncation_note
 
 # --------------------------------------------------------------------------- #
 # Message helpers
@@ -181,6 +182,13 @@ class DataTable(ctk.CTkFrame):
             self, text="", font=theme.font(12), text_color=theme.TEXT_MUTED
         )
 
+        # Says so when the list is only the beginning of what matched. It sits
+        # below the rows and takes no space until there is something to say,
+        # so a shop whose lists never reach the cap never sees it.
+        self._note_label = ctk.CTkLabel(
+            self, text="", font=theme.font(11), text_color=theme.TEXT_MUTED, anchor="w"
+        )
+
     # -- data --------------------------------------------------------------- #
 
     def set_formatter(self, key: str, func) -> None:
@@ -211,6 +219,40 @@ class DataTable(ctk.CTkFrame):
         else:
             self._empty_label.configure(text=empty_message)
             self._empty_label.place(relx=0.5, rely=0.5, anchor="center")
+
+        self._show_note(truncation_note(rows))
+
+    def _show_note(self, text: str) -> None:
+        if text:
+            self._note_label.configure(text=text)
+            self._note_label.grid(row=1, column=0, columnspan=2, sticky="ew",
+                                  padx=12, pady=(0, 8))
+        else:
+            self._note_label.grid_remove()
+
+    def update_row(self, row, tag_func=None) -> bool:
+        """Rewrite one row already on screen. False if it is not there.
+
+        A stock take scans a barcode at a time into a sheet that can run to a
+        thousand lines, and rebuilding every one of them to change a single
+        number is work the person holding the scanner waits for. The caller
+        falls back to :meth:`set_rows` when False comes back, which is what
+        happens when a filter means the row should now appear or disappear.
+        """
+        iid = str(row[self.id_key])
+        if not self.tree.exists(iid):
+            return False
+
+        values = []
+        for key, *_ in self.columns:
+            value = _row_value(row, key)
+            formatter = self._formatters.get(key)
+            values.append(formatter(value, row) if formatter else _default_text(value))
+        tags = tag_func(row) if tag_func else ()
+        if isinstance(tags, str):
+            tags = (tags,)
+        self.tree.item(iid, values=values, tags=tags or ())
+        return True
 
     # -- selection ---------------------------------------------------------- #
 

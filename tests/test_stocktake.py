@@ -152,6 +152,32 @@ class CountingTests(StockTakeTestCase):
         self.assertEqual(totals["net_units"], -1)
         self.assertAlmostEqual(totals["net_value"], -6.0, places=2)
 
+    def test_totalling_the_sheet_in_memory_agrees_with_the_database(self):
+        """The counting screen adds the sheet up itself; it must not drift.
+
+        Every scan would otherwise ask the database to re-total a worksheet the
+        screen is already holding. Two ways of reaching one number is a bug
+        waiting to happen, so they are checked against each other here — at a
+        half-counted sheet, which is where a disagreement would show.
+        """
+        stocktake.record_count(self.take_id, self.widget, 18)
+        rows = stocktake.list_items(self.take_id)
+        self.assertEqual(
+            stocktake.summarise(rows), dict(stocktake.summary(self.take_id))
+        )
+
+    def test_totalling_an_untouched_and_a_finished_sheet_also_agree(self):
+        self.assertEqual(
+            stocktake.summarise(stocktake.list_items(self.take_id)),
+            dict(stocktake.summary(self.take_id)),
+        )
+        stocktake.record_count(self.take_id, self.widget, 18)
+        stocktake.record_count(self.take_id, self.gadget, 9)
+        self.assertEqual(
+            stocktake.summarise(stocktake.list_items(self.take_id)),
+            dict(stocktake.summary(self.take_id)),
+        )
+
     def test_lines_can_be_filtered_to_the_variances(self):
         stocktake.record_count(self.take_id, self.widget, 20)
         stocktake.record_count(self.take_id, self.gadget, 5)

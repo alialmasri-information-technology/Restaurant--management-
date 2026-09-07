@@ -918,7 +918,9 @@ class PosView(ctk.CTkFrame):
         ]:
             self.category_var.set("All categories")
 
-        self._customers = list(customers_service.list_customers())
+        # Every customer has to be pickable from the menu, so this one is
+        # deliberately not capped.
+        self._customers = list(customers_service.list_customers(limit=None))
         self.customer_menu.configure(
             values=[WALK_IN] + [_customer_label(c) for c in self._customers]
         )

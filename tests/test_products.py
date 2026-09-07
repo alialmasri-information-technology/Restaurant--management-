@@ -59,6 +59,33 @@ class ProductTests(DatabaseTestCase):
         self.assertEqual(len(service.list_products()), 0)
         self.assertEqual(len(service.list_products(include_inactive=True)), 1)
 
+    def test_a_long_catalogue_stops_at_the_cap_and_says_so(self):
+        """A browsing list is bounded; it must also admit that it is."""
+        for number in range(12):
+            self.make(sku=f"CAP-{number}", name=f"Capped {number:02d}")
+
+        rows = service.list_products(limit=5)
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(rows.truncated)
+        # The cap takes the first five in the list's own order, not five at random.
+        self.assertEqual(
+            [row["name"] for row in rows],
+            [f"Capped {number:02d}" for number in range(5)],
+        )
+
+    def test_a_catalogue_inside_the_cap_is_not_marked_truncated(self):
+        self.make(sku="ONE", name="Only one")
+        rows = service.list_products(limit=5)
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows.truncated)
+
+    def test_the_cap_can_be_lifted_for_exports_and_reorder_lists(self):
+        for number in range(12):
+            self.make(sku=f"ALL-{number}", name=f"Everything {number:02d}")
+        rows = service.list_products(limit=None)
+        self.assertEqual(len(rows), 12)
+        self.assertFalse(rows.truncated)
+
 
 class StockTests(DatabaseTestCase):
     def setUp(self):

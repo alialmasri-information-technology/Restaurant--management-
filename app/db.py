@@ -488,6 +488,46 @@ def query_one(sql: str, params=()) -> sqlite3.Row | None:
     return get_connection().execute(sql, params).fetchone()
 
 
+#: How many rows a browsing list hands a screen before it stops. A shop that
+#: has traded for years can hold tens of thousands of products and customers,
+#: and no one reads the twelve-thousandth row of a table — but the screen still
+#: builds it, one widget at a time, every time the list refreshes. Searching
+#: and filtering narrow the list; this is the backstop for a bare listing.
+LIST_LIMIT = 500
+
+
+class RowList(list):
+    """Rows, with a note saying whether they are all of them.
+
+    A plain ``list`` everywhere it is passed, so every existing caller and
+    every test keeps working untouched; the screens that want to say "showing
+    the first 500" ask :attr:`truncated` and :attr:`limit`.
+    """
+
+    #: True when the query had more to give and was cut short.
+    truncated: bool = False
+    #: The cap that was applied, for a screen that wants to name the number.
+    limit: int | None = None
+
+
+def query_limited(sql: str, params=(), limit: int | None = LIST_LIMIT) -> RowList:
+    """Run a listing query, capped, and report whether anything was left behind.
+
+    One row more than asked for is fetched and thrown away: that extra row is
+    how we know there was more, without a second ``COUNT(*)`` over the same
+    joins to find out.
+    """
+    if limit is None:
+        rows = RowList(query(sql, params))
+        return rows
+
+    fetched = query(f"{sql} LIMIT ?", tuple(params) + (limit + 1,))
+    rows = RowList(fetched[:limit])
+    rows.truncated = len(fetched) > limit
+    rows.limit = limit
+    return rows
+
+
 def scalar(sql: str, params=(), default=None):
     row = query_one(sql, params)
     if row is None or row[0] is None:

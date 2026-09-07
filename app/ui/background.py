@@ -117,8 +117,10 @@ def _report_error(exc: Exception) -> None:
 def busy(parent) -> None:
     """Mark ``parent``'s window busy for a job that stays on the UI thread.
 
-    Restoring a backup is the one such job left: it must own the calling
-    thread, because it closes and reopens that thread's database connection.
+    Two jobs stay here. Restoring a backup must own the calling thread,
+    because it closes and reopens that thread's database connection; the CSV
+    import reads and writes through a modal the person is looking at, and
+    moving it off the thread would only let them press the button twice.
     """
     window = parent.winfo_toplevel()
     try:

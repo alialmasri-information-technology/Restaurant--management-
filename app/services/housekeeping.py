@@ -1,9 +1,10 @@
 """Housekeeping: what the shop leaves behind, tidied when the doors open.
 
-Four things accumulate for as long as RE4 trades. Two are business records the
-shop decides about — the audit trail and the printed receipts — and two are
-scratch work that should never outlive its usefulness: held sales nobody came
-back for, and sign-in throttle rows for accounts that no longer exist.
+Five things accumulate for as long as RE4 trades. Three are business records
+the shop decides about — the audit trail, the stock movement history and the
+printed receipts — and two are scratch work that should never outlive its
+usefulness: held sales nobody came back for, and sign-in throttle rows for
+accounts that no longer exist.
 
 Everything here is conservative by default. Records are kept for ever unless an
 administrator names a number of days, because deleting a receipt or an audit
@@ -37,13 +38,14 @@ def tidy() -> dict[str, int]:
         "parked": _clear_old_parked(),
         "receipts": _clear_old_receipts(),
         "audit": _clear_old_audit(),
+        "inventory": _clear_old_inventory(),
     }
     if any(removed.values()):
         logs.info(
             "Housekeeping: %d stale sign-in row(s), %d parked sale(s), "
-            "%d receipt(s), %d audit row(s) removed",
+            "%d receipt(s), %d audit row(s), %d stock movement(s) removed",
             removed["throttle"], removed["parked"], removed["receipts"],
-            removed["audit"],
+            removed["audit"], removed["inventory"],
         )
         # A purge that deletes a chunk of the ledger leaves the WAL to match;
         # fold it back now rather than at closing time.
@@ -84,6 +86,25 @@ def _clear_old_audit() -> int:
     with db.transaction() as conn:
         cursor = conn.execute(
             "DELETE FROM audit_log WHERE at < ?", (_cutoff(days),)
+        )
+        return cursor.rowcount
+
+
+def _clear_old_inventory() -> int:
+    """Trim the stock movement history.
+
+    This is the "why is there one fewer than yesterday" log behind a product's
+    movement list. It grows by a row per line sold, so it outpaces every other
+    table in the file — and, unlike the audit trail, none of it is evidence
+    about a person. It is still kept for ever by default: a shopkeeper who
+    wants to know where the stock went a year ago should be able to find out.
+    """
+    days = settings_service.inventory_keep_days()
+    if not days:
+        return 0
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "DELETE FROM inventory_log WHERE log_time < ?", (_cutoff(days),)
         )
         return cursor.rowcount
 

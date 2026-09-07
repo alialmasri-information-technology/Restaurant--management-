@@ -105,6 +105,7 @@ def list_products(
     include_inactive: bool = False,
     low_stock_only: bool = False,
     in_stock_only: bool = False,
+    limit: int | None = db.LIST_LIMIT,
 ) -> list[sqlite3.Row]:
     clauses: list[str] = []
     params: list = []
@@ -132,7 +133,7 @@ def list_products(
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY p.name COLLATE NOCASE"
-    return db.query(sql, tuple(params))
+    return db.query_limited(sql, tuple(params), limit)
 
 
 def get_product(product_id: int) -> sqlite3.Row | None:
@@ -155,7 +156,9 @@ def get_by_code(code: str) -> sqlite3.Row | None:
 
 
 def low_stock_products() -> list[sqlite3.Row]:
-    return list_products(low_stock_only=True)
+    # The reorder list raises real purchase orders from this; a cap here would
+    # quietly leave stock unordered.
+    return list_products(low_stock_only=True, limit=None)
 
 
 def _validate(name: str, sku: str, price, cost, reorder_level) -> None:

@@ -264,7 +264,8 @@ class CustomersView(ctk.CTkFrame):
             self.refresh()
 
     def _export(self) -> None:
-        rows = customers_service.list_customers()
+        # An export is everyone, not the first screenful.
+        rows = customers_service.list_customers(limit=None)
         if not rows:
             show_error(self, "There are no customers to export.", "Nothing to export")
             return

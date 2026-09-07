@@ -115,6 +115,7 @@ DEFAULT_SETTINGS = {
     "parked_keep_days": "30",  # held sales nobody came back for; 0 = keep for ever
     "receipt_keep_days": "0",  # printed receipts are proof; 0 = keep for ever
     "audit_keep_days": "0",  # the audit trail is a record; 0 = keep for ever
+    "inventory_keep_days": "0",  # stock movement history; 0 = keep for ever
     "require_shift": "1",  # a till shift must be open before selling
     "allow_price_override": "1",  # employees may change a price with admin approval
     "login_max_attempts": "5",  # consecutive failures before the account locks; 0 = off

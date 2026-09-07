@@ -38,7 +38,9 @@ _SELECT = """
 """
 
 
-def list_suppliers(search: str = "", include_inactive: bool = False) -> list[sqlite3.Row]:
+def list_suppliers(
+    search: str = "", include_inactive: bool = False, limit: int | None = db.LIST_LIMIT
+) -> list[sqlite3.Row]:
     clauses, params = [], []
     if not include_inactive:
         clauses.append("s.is_active = 1")
@@ -51,7 +53,7 @@ def list_suppliers(search: str = "", include_inactive: bool = False) -> list[sql
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY s.name COLLATE NOCASE"
-    return db.query(sql, tuple(params))
+    return db.query_limited(sql, tuple(params), limit)
 
 
 def get_supplier(supplier_id: int) -> sqlite3.Row | None:

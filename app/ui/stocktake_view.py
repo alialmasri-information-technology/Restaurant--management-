@@ -37,6 +37,7 @@ class StockTakeView(ctk.CTkFrame):
         self.shell = shell
         self.count = None
         self._sheet: list[dict] = []
+        self._by_product: dict[int, dict] = {}
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(3, weight=1)
@@ -189,6 +190,7 @@ class StockTakeView(ctk.CTkFrame):
                 "system thinks is on the shelves."
             )
             self._sheet = []
+            self._by_product = {}
             for card in (
                 self.card_progress, self.card_short, self.card_over, self.card_value
             ):
@@ -219,9 +221,14 @@ class StockTakeView(ctk.CTkFrame):
         self._sheet: list[dict] = [
             dict(row) for row in stocktake_service.list_items(self.count["stock_take_id"])
         ]
+        # Scanning walks the sheet by product, once per barcode; on a full
+        # count that is a thousand comparisons to find one line.
+        self._by_product: dict[int, dict] = {
+            line["product_id"]: line for line in self._sheet
+        }
 
     def _render_stats(self) -> None:
-        totals = stocktake_service.summary(self.count["stock_take_id"])
+        totals = stocktake_service.summarise(self._sheet)
         counted = totals.get("counted_lines", 0)
         lines = totals.get("line_count", 0) or 1
         self.card_progress.set(
@@ -324,14 +331,19 @@ class StockTakeView(ctk.CTkFrame):
             text=f"{product['name']} — counted {counted}", text_color=theme.SUCCESS
         )
         self.scan_var.set("")
-        self._render_lines()
+        # Redrawing the sheet costs a row per line on screen. When the line is
+        # already showing and the filter cannot want it gone, rewrite that one
+        # row; anything else — a "not counted yet" filter the line has just
+        # left — needs the list built again.
+        if not (line is not None
+                and self.filter_var.get() == FILTERS[0]
+                and self.table.update_row(line, tag_func=_line_tag)):
+            self._render_lines()
         self._render_stats()
         self.scan_entry.focus_set()
 
     def _find_line(self, product_id):
-        return next(
-            (line for line in self._sheet if line["product_id"] == product_id), None
-        )
+        return self._by_product.get(product_id)
 
     def _selected_line(self):
         product_id = self.table.selected_int()

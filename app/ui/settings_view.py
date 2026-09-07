@@ -384,6 +384,7 @@ class SettingsView(ctk.CTkScrollableFrame):
             ("parked_keep_days", "Held sales kept (days)"),
             ("receipt_keep_days", "Receipts kept (days)"),
             ("audit_keep_days", "Audit log kept (days)"),
+            ("inventory_keep_days", "Stock history kept (days)"),
         )):
             ctk.CTkLabel(
                 keep_row, text=label, font=theme.font(12),
@@ -391,7 +392,7 @@ class SettingsView(ctk.CTkScrollableFrame):
             ).grid(row=0, column=column * 2, sticky="w", padx=(0, 6))
             entry = ctk.CTkEntry(keep_row, width=70, height=32)
             entry.grid(row=0, column=column * 2 + 1,
-                       sticky="w", padx=(0, 16 if column < 2 else 0))
+                       sticky="w", padx=(0, 0 if key == "inventory_keep_days" else 16))
             self._keep_entries[key] = entry
 
         ctk.CTkButton(

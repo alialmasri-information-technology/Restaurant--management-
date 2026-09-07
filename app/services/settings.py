@@ -124,6 +124,11 @@ def audit_keep_days() -> int:
     return _keep_days("audit_keep_days")
 
 
+def inventory_keep_days() -> int:
+    """Stock movements older than this are tidied at start-up; 0 keeps them."""
+    return _keep_days("inventory_keep_days")
+
+
 def _keep_days(key: str) -> int:
     try:
         return max(0, int(_decimal(key, config.DEFAULT_SETTINGS.get(key, "0"))))

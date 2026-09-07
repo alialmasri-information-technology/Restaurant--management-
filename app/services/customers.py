@@ -9,13 +9,6 @@ from app import db
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-#: What the customer owes, as a correlated subquery — needed as a filter, which
-#: an aggregate JOIN cannot be, since nothing here is grouped.
-BALANCE = """
-    COALESCE((SELECT SUM(l.amount_usd) FROM customer_ledger l
-               WHERE l.customer_id = c.customer_id), 0)
-"""
-
 _SELECT = """
     SELECT c.*,
            COALESCE(sp.purchase_count, 0) AS purchase_count,
@@ -44,7 +37,9 @@ class CustomerError(Exception):
     """Raised for user-facing customer failures."""
 
 
-def list_customers(search: str = "", *, owing_only: bool = False) -> list[sqlite3.Row]:
+def list_customers(
+    search: str = "", *, owing_only: bool = False, limit: int | None = db.LIST_LIMIT
+) -> list[sqlite3.Row]:
     sql = _SELECT
     clauses: list[str] = []
     params: list = []
@@ -53,12 +48,12 @@ def list_customers(search: str = "", *, owing_only: bool = False) -> list[sqlite
         pattern = f"%{search.strip()}%"
         params += [pattern, pattern, pattern]
     if owing_only:
-        clauses.append(f"{BALANCE} > 0.005")
+        clauses.append("COALESCE(led.balance_usd, 0) > 0.005")
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
 
     sql += " ORDER BY c.name COLLATE NOCASE"
-    return db.query(sql, tuple(params))
+    return db.query_limited(sql, tuple(params), limit)
 
 
 def get_customer(customer_id: int) -> sqlite3.Row | None:

@@ -11,6 +11,7 @@ import datetime as dt
 
 from app import config, db
 from app.services import housekeeping
+from app.services import products as products_service
 from app.services import settings as settings_service
 from tests.support import DatabaseTestCase
 
@@ -108,6 +109,46 @@ class AuditHousekeepingTests(DatabaseTestCase):
         self._audit_line(days_ago=2)
         removed = housekeeping.tidy()
         self.assertEqual(removed["audit"], 1)
+        self.assertEqual(len(self._test_rows()), 1)
+
+
+class InventoryHousekeepingTests(DatabaseTestCase):
+    """The stock movement history: the fastest-growing table, kept by default."""
+
+    opens_shift = False
+
+    def setUp(self):
+        super().setUp()
+        self.product = products_service.create_product(
+            sku="H-1", name="Housekept", price_usd=2, stock_qty=1
+        )
+
+    def _movement(self, *, days_ago=60):
+        with db.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO inventory_log
+                    (product_id, change_qty, new_stock, reason, log_time)
+                VALUES (?, 1, 1, 'Test', ?)
+                """,
+                (self.product, _days_ago(days_ago)),
+            )
+
+    def _test_rows(self):
+        return db.query("SELECT log_id FROM inventory_log WHERE reason = 'Test'")
+
+    def test_stock_history_is_kept_for_ever_by_default(self):
+        self._movement(days_ago=400)
+        removed = housekeeping.tidy()
+        self.assertEqual(removed["inventory"], 0)
+        self.assertEqual(len(self._test_rows()), 1)
+
+    def test_a_stated_retention_is_honoured(self):
+        settings_service.set_value("inventory_keep_days", "30")
+        self._movement(days_ago=60)
+        self._movement(days_ago=2)
+        removed = housekeeping.tidy()
+        self.assertEqual(removed["inventory"], 1)
         self.assertEqual(len(self._test_rows()), 1)
 
 
