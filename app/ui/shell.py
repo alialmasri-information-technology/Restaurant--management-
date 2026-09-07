@@ -7,7 +7,7 @@ import webbrowser
 
 import customtkinter as ctk
 
-from app import config
+from app import config, logs
 from app.ui import background, theme
 from app.ui.widgets import ask_confirm
 
@@ -65,7 +65,21 @@ class AppShell(ctk.CTkFrame):
         def job():
             return updates.check(settings_service)
 
-        background.run(job, self._show_update_banner, parent=self)
+        background.run(
+            job, self._show_update_banner, self._update_check_failed, parent=self
+        )
+
+    def _update_check_failed(self, exc: Exception) -> None:
+        """Log it. A question the shop never asked must not become a dialog.
+
+        Without an on_error of its own this job took background.run's default,
+        which is to show one — so a network that answered badly, rather than
+        not at all, put "That did not finish" in front of whoever opened the
+        till that morning. The module below is careful not to raise; this is
+        here so that being careful is not the only thing standing between a
+        bad connection and a modal at start-up.
+        """
+        logs.warning("Update check failed: %s", exc)
 
     def _show_update_banner(self, found) -> None:
         if not found:

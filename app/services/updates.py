@@ -10,6 +10,7 @@ whole of the nagging anyone gets.
 from __future__ import annotations
 
 import datetime as dt
+import http.client
 import json
 import os
 import urllib.error
@@ -65,13 +66,24 @@ def latest_release() -> tuple[str, str] | None:
     None means no release, an unreachable network, a rate limit, or anything
     else a till cannot do anything about — every one of which is the same
     message: carry on.
+
+    Being offline is the easy case and was the only one handled. The hard case
+    is a connection that answers but not with a release: the captive portal in
+    a mall or a shared building, which intercepts the request and replies with
+    a login page, a truncated body or a malformed status line. Those raise from
+    http.client, which is neither OSError nor ValueError, so they used to leave
+    here as exceptions — and a check nobody asked for became a dialog on a till.
     """
     url = f"https://api.github.com/repos/{config.REPO_SLUG}/releases/latest"
     try:
         request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(request, timeout=5) as response:
             data = json.load(response)
-    except (OSError, urllib.error.URLError, ValueError):
+    except (OSError, urllib.error.URLError, ValueError, http.client.HTTPException):
+        return None
+    if not isinstance(data, dict):
+        # Well-formed JSON that is not a release: a portal can answer with a
+        # list or a bare string, and asking either one for a tag raises.
         return None
     tag = str(data.get("tag_name") or "")
     page = str(data.get("html_url") or "")

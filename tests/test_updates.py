@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import http.client
+import io
 import os
 import unittest
+import urllib.error
+import urllib.request
+from unittest import mock
 
 from app import config
 from app.services import settings as settings_service
@@ -87,3 +92,93 @@ class CheckCacheTests(DatabaseTestCase):
             self.assertIsNone(updates.check(settings_service))
         finally:
             updates.latest_release = original
+
+
+class UnreachableNetworkTests(unittest.TestCase):
+    """Every way a network can answer badly, and none of them a dialog.
+
+    Being offline was the only case handled, and it is the easy one -- the
+    request raises URLError and nothing else happens. The awkward case is a
+    connection that answers, but not with a release: the captive portal in a
+    mall, a shared building or a cafe, which is exactly where a small shop's
+    till sits. Those raise from http.client, which is neither OSError nor
+    ValueError, so they escaped.
+
+    Escaping matters because the shell asks this question on the background
+    worker, and a job that raises with no on_error of its own gets the default
+    handler: an error dialog. A version check nobody asked for became a modal
+    in front of whoever opened the till that morning.
+    """
+
+    def answer(self, body: bytes):
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+        return lambda *a, **k: Response(body)
+
+    def raises(self, exc):
+        def fake(*a, **k):
+            raise exc
+        return fake
+
+    def check(self, fake_urlopen):
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen):
+            return updates.latest_release()
+
+    def test_a_connection_that_answers_badly_is_as_quiet_as_no_connection(self):
+        for label, fake in (
+            ("truncated body", self.raises(http.client.IncompleteRead(b"{"))),
+            ("malformed status line", self.raises(http.client.BadStatusLine("<html>"))),
+            ("oversized header", self.raises(http.client.LineTooLong("status line"))),
+            ("no route at all", self.raises(urllib.error.URLError("offline"))),
+            ("a login page", self.answer(b"<html>Sign in to the network</html>")),
+        ):
+            with self.subTest(label=label):
+                self.assertIsNone(self.check(fake))
+
+    def test_json_that_is_not_a_release_is_not_asked_for_a_tag(self):
+        """A portal can answer with well-formed JSON of the wrong shape."""
+        for body in (b"[]", b'"login required"', b"null", b"42"):
+            with self.subTest(body=body):
+                self.assertIsNone(self.check(self.answer(body)))
+
+    def test_a_real_release_still_gets_through(self):
+        """The quieting must not have silenced the answer as well."""
+        found = self.check(self.answer(
+            b'{"tag_name": "v99.0.0", "html_url": "https://example.com/r"}'
+        ))
+        self.assertEqual(found, ("99.0.0", "https://example.com/r"))
+
+    def test_a_release_that_is_not_newer_is_no_answer(self):
+        found = self.check(self.answer(
+            b'{"tag_name": "v0.0.1", "html_url": "https://example.com/r"}'
+        ))
+        self.assertIsNone(found)
+
+    def test_a_release_with_no_page_is_no_answer(self):
+        found = self.check(self.answer(b'{"tag_name": "v99.0.0", "html_url": ""}'))
+        self.assertIsNone(found)
+
+
+class BannerFailurePathTests(unittest.TestCase):
+    """The shell must not rely on the module above never raising."""
+
+    def source_of(self, name: str) -> str:
+        import inspect
+
+        from app.ui import shell
+
+        return inspect.getsource(getattr(shell.AppShell, name))
+
+    def test_the_shell_hands_the_check_its_own_error_handler(self):
+        """Otherwise background.run supplies one, and its default is a dialog."""
+        self.assertIn("_update_check_failed", self.source_of("_check_for_update"))
+
+    def test_that_handler_logs_rather_than_showing_anything(self):
+        source = self.source_of("_update_check_failed")
+        self.assertIn("logs.", source)
+        self.assertNotIn("show_error", source)
