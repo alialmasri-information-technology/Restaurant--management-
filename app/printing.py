@@ -21,9 +21,14 @@ IS_MAC = sys.platform == "darwin"
 
 # PowerShell is only asked for a plain list of names; nothing is interpolated.
 _LIST_PRINTERS_PS = "Get-Printer | Select-Object -ExpandProperty Name"
-_DEFAULT_PRINTER_PS = (
-    "(Get-CimInstance -Class Win32_Printer | Where-Object Default -eq $true).Name"
-)
+
+#: Long enough for the machine the Settings screen warns about. Starting
+#: PowerShell and enumerating printers "can take the better part of half a
+#: minute on a sleepy machine" -- and the general timeout below is twenty
+#: seconds, so on exactly that machine the call was killed and the shop was
+#: told no printers could be listed. This runs on the background worker, where
+#: waiting costs nothing but the wait.
+LIST_TIMEOUT = 45
 
 
 class PrintError(Exception):
@@ -45,9 +50,12 @@ def list_printers() -> list[str]:
     """Installed printer names. Returns an empty list if they cannot be listed."""
     try:
         if IS_WINDOWS:
-            result = _run(["powershell", "-NoProfile", "-Command", _LIST_PRINTERS_PS])
+            result = _run(
+                ["powershell", "-NoProfile", "-Command", _LIST_PRINTERS_PS],
+                timeout=LIST_TIMEOUT,
+            )
         else:
-            result = _run(["lpstat", "-a"])
+            result = _run(["lpstat", "-a"], timeout=LIST_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         logs.warning("Could not list printers", exc_info=False)
         return []
@@ -61,25 +69,6 @@ def list_printers() -> list[str]:
             continue
         names.append(line if IS_WINDOWS else line.split()[0])
     return names
-
-
-def default_printer() -> str:
-    try:
-        if IS_WINDOWS:
-            result = _run(["powershell", "-NoProfile", "-Command", _DEFAULT_PRINTER_PS])
-        else:
-            result = _run(["lpstat", "-d"])
-    except (OSError, subprocess.SubprocessError):
-        # Its sibling above logs the same failure; a shop with no default
-        # printer set is a normal state, but the command falling over is not.
-        logs.warning("Could not ask the system for the default printer", exc_info=False)
-        return ""
-    if result.returncode != 0:
-        return ""
-    text = result.stdout.strip()
-    if not IS_WINDOWS and ":" in text:
-        text = text.split(":", 1)[1].strip()
-    return text
 
 
 def print_file(path, printer_name: str = "") -> str:

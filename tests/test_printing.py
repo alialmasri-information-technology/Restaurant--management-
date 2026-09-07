@@ -125,10 +125,38 @@ class SourceTests(unittest.TestCase):
 
     def test_the_powershell_that_remains_interpolates_nothing(self):
         """Listing printers still uses it, and may keep doing so."""
-        for constant in (printing._LIST_PRINTERS_PS, printing._DEFAULT_PRINTER_PS):
-            with self.subTest(constant=constant):
-                self.assertNotIn("{", constant)
-                self.assertNotIn("%s", constant)
+        self.assertNotIn("{", printing._LIST_PRINTERS_PS)
+        self.assertNotIn("%s", printing._LIST_PRINTERS_PS)
+
+
+class ListPrintersTests(unittest.TestCase):
+    def setUp(self):
+        self.run = self.enterContext(mock.patch.object(printing, "_run"))
+        self.run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+
+    def test_the_listing_waits_as_long_as_the_screen_says_it_might(self):
+        """Settings warns this "can take the better part of half a minute".
+
+        It was left on the general twenty-second timeout, so on exactly the
+        sleepy machine that warning describes the subprocess was killed and
+        the shop was told no printers could be listed.
+        """
+        printing.list_printers()
+        self.assertGreaterEqual(self.run.call_args.kwargs["timeout"], 30)
+
+    def test_a_listing_that_fails_is_no_printers_rather_than_an_error(self):
+        """The screen offers the system default when this comes back empty."""
+        import subprocess
+
+        self.run.side_effect = subprocess.TimeoutExpired("powershell", 45)
+        self.assertEqual(printing.list_printers(), [])
+
+    def test_names_come_back_one_per_line(self):
+        self.enterContext(mock.patch.object(printing, "IS_WINDOWS", True))
+        self.run.return_value = mock.Mock(
+            returncode=0, stdout="Front Counter\n\nBack Office\n", stderr=""
+        )
+        self.assertEqual(printing.list_printers(), ["Front Counter", "Back Office"])
 
 
 def _temp_pdf():
