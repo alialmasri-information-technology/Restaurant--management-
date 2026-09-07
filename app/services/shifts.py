@@ -132,16 +132,36 @@ def totals(shift_id: int) -> dict:
     if shift is None:
         raise ShiftError("Till shift not found.")
 
+    # cash_sales is what the drawer actually received, which is not the same as
+    # the value of the invoices marked Cash. Two things are paid before the
+    # cashier opens the drawer, and counting either one again leaves the till
+    # short by that much at close -- recorded against whoever was on it:
+    #
+    #   * a gift card, which pays part of the total off the card's balance;
+    #   * a layaway deposit, which was banked when the goods were set aside
+    #     and is already a cash movement in that shift, cash or card.
+    #
+    # Both are subtracted here rather than stored on the sale, so a shift that
+    # was reconciled wrongly in the past reports correctly when it is reopened.
     sales_row = db.query_one(
         """
         SELECT COUNT(*) AS sale_count,
                COALESCE(SUM(total_usd), 0) AS sales_total,
-               COALESCE(SUM(CASE WHEN payment_method = 'Cash' THEN total_usd ELSE 0 END), 0)
-                   AS cash_sales,
+               COALESCE(SUM(
+                   CASE WHEN payment_method = 'Cash' THEN
+                       total_usd
+                       - COALESCE((SELECT -SUM(e.amount_usd)
+                                   FROM gift_card_events e
+                                   WHERE e.sale_id = s.sale_id
+                                     AND e.kind = 'Redeem'), 0)
+                       - COALESCE((SELECT l.deposit_usd
+                                   FROM layaways l
+                                   WHERE l.completed_sale_id = s.sale_id), 0)
+                   ELSE 0 END), 0) AS cash_sales,
                COALESCE(SUM(CASE WHEN payment_method != 'Cash' THEN total_usd ELSE 0 END), 0)
                    AS non_cash_sales
-        FROM sales
-        WHERE shift_id = ?
+        FROM sales s
+        WHERE s.shift_id = ?
         """,
         (shift_id,),
     )

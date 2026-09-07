@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 
 from app import config
+from app.services import giftcards as giftcards_service
+from app.services import layaways as layaways_service
 from app.services import products as products_service
 from app.services import sales as sales_service
 from app.services import settings as settings_service
@@ -145,6 +147,124 @@ class ClosingTests(DatabaseTestCase):
         service.close_shift(self.shift_id, self.admin.user_id, counted_usd="100")
         self.assertIsNone(service.current_shift())
         service.open_shift(self.admin.user_id, opening_float=10)
+
+
+class MoneyPaidBeforeTheDrawerTests(DatabaseTestCase):
+    """What the drawer expects must be what the cashier can count.
+
+    The expected figure took the full value of every invoice marked Cash. Two
+    kinds of money are paid before the cashier ever opens the drawer, and both
+    were counted again:
+
+      * a gift card, which pays part of the total off the card's own balance;
+      * a layaway deposit, banked when the goods were set aside and already a
+        cash movement in that shift.
+
+    Either one leaves the till short by that amount at close -- and the
+    shortfall is written into the shift as the variance of whoever was on it,
+    which is a bad thing to be wrong about.
+
+    The harness opens a shift with a $100 float.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.product = products_service.get_product(
+            products_service.create_product(
+                sku="S1", name="Widget", price_usd="50.00", cost_usd="10.00",
+                stock_qty=50,
+            )
+        )
+
+    def cart(self):
+        cart = sales_service.Cart()
+        cart.add_product(self.product, 1)
+        return cart
+
+    def test_a_gift_card_does_not_put_money_in_the_drawer(self):
+        card = giftcards_service.issue(30, user_id=self.admin.user_id)
+        sales_service.create_sale(
+            user_id=self.admin.user_id, cart=self.cart(), payment_method="Cash",
+            gift_card_code=card["code"], gift_card_amount=30, amount_paid=20,
+        )
+        totals = service.totals(self.shift_id)
+
+        self.assertEqual(totals["cash_sales"], 20.0, "the card's 30.00 was counted as cash")
+        self.assertEqual(totals["expected_usd"], 120.0)
+
+    def test_a_card_that_pays_the_whole_sale_leaves_the_drawer_alone(self):
+        card = giftcards_service.issue(50, user_id=self.admin.user_id)
+        sales_service.create_sale(
+            user_id=self.admin.user_id, cart=self.cart(), payment_method="Cash",
+            gift_card_code=card["code"], gift_card_amount=50, amount_paid=0,
+        )
+        self.assertEqual(service.totals(self.shift_id)["expected_usd"], 100.0)
+
+    def test_a_layaway_deposit_is_not_taken_twice(self):
+        """It was banked as a cash movement when the goods were set aside."""
+        layaway_id = layaways_service.hold(
+            cart=self.cart(), customer_id=None, deposit=20,
+            user_id=self.admin.user_id,
+        )
+        self.assertEqual(service.totals(self.shift_id)["cash_in"], 20.0)
+
+        layaways_service.collect(
+            layaway_id, self.admin.user_id, payment_method="Cash", amount_paid=30,
+        )
+        totals = service.totals(self.shift_id)
+
+        self.assertEqual(totals["cash_sales"], 30.0, "the deposit was counted again")
+        self.assertEqual(totals["expected_usd"], 150.0, "100 float + 20 deposit + 30")
+
+    def test_a_deposit_taken_on_the_card_machine_is_still_not_cash(self):
+        layaway_id = layaways_service.hold(
+            cart=self.cart(), customer_id=None, deposit=20, deposit_method="Card",
+            user_id=self.admin.user_id,
+        )
+        layaways_service.collect(
+            layaway_id, self.admin.user_id, payment_method="Cash", amount_paid=30,
+        )
+        totals = service.totals(self.shift_id)
+
+        self.assertEqual(totals["cash_in"], 0.0, "a card deposit is not a cash movement")
+        self.assertEqual(totals["cash_sales"], 30.0)
+        self.assertEqual(totals["expected_usd"], 130.0, "100 float + 30 balance")
+
+    def test_change_given_back_is_not_expected_in_the_drawer(self):
+        """The ordinary case, kept here so the fix cannot break it."""
+        sales_service.create_sale(
+            user_id=self.admin.user_id, cart=self.cart(),
+            payment_method="Cash", amount_paid=60,
+        )
+        self.assertEqual(service.totals(self.shift_id)["expected_usd"], 150.0)
+
+    def test_a_shift_with_all_of_them_at_once_still_balances(self):
+        card = giftcards_service.issue(30, user_id=self.admin.user_id)
+        sales_service.create_sale(
+            user_id=self.admin.user_id, cart=self.cart(), payment_method="Cash",
+            gift_card_code=card["code"], gift_card_amount=30, amount_paid=20,
+        )
+        sales_service.create_sale(
+            user_id=self.admin.user_id, cart=self.cart(),
+            payment_method="Cash", amount_paid=60,
+        )
+        sales_service.create_sale(
+            user_id=self.admin.user_id, cart=self.cart(),
+            payment_method="Card", amount_paid=50,
+        )
+        layaway_id = layaways_service.hold(
+            cart=self.cart(), customer_id=None, deposit=20,
+            user_id=self.admin.user_id,
+        )
+        layaways_service.collect(
+            layaway_id, self.admin.user_id, payment_method="Cash", amount_paid=30,
+        )
+
+        counted = 100 + 20 + 50 + 20 + 30  # float, then every note that changed hands
+        summary = service.close_shift(
+            self.shift_id, self.admin.user_id, counted_usd=counted, counted_lbp=0,
+        )
+        self.assertEqual(summary["variance_usd"], 0.0)
 
 
 if __name__ == "__main__":
