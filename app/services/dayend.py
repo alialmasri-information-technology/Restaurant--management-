@@ -164,10 +164,20 @@ def day_summary(date=None) -> dict:
     drawers = shifts_for(date)
     account = account_movement(date)
 
+    open_drawers = [s for s in drawers if s["is_open"]]
     expected = sum(D(s["totals"]["expected_usd"]) for s in drawers)
     counted = sum(D(s["counted_usd"]) for s in drawers if not s["is_open"])
     variance = sum(D(s["variance_usd"]) for s in drawers if not s["is_open"])
-    open_drawers = [s for s in drawers if s["is_open"]]
+    # Expected covers every drawer; counted and variance can only cover the ones
+    # that were counted. Printed as a column those three numbers contradict each
+    # other the moment a till is left open -- 300 expected, 150 counted, and a
+    # variance of zero underneath calling itself BALANCED. So the figure that
+    # pairs with counted is kept separately, and the money still sitting in an
+    # open drawer is named rather than left to look like a shortfall.
+    expected_counted = sum(
+        D(s["totals"]["expected_usd"]) for s in drawers if not s["is_open"]
+    )
+    expected_open = sum(D(s["totals"]["expected_usd"]) for s in open_drawers)
 
     revenue = D(trading["revenue"])
     profit = D(trading["gross_profit"])
@@ -197,6 +207,8 @@ def day_summary(date=None) -> dict:
         "shift_count": len(drawers),
         "open_shifts": [s["shift_id"] for s in open_drawers],
         "expected_usd": to_float(expected),
+        "expected_counted_usd": to_float(expected_counted),
+        "expected_open_usd": to_float(expected_open),
         "counted_usd": to_float(counted),
         "variance_usd": to_float(variance),
         "reconciled": not open_drawers,

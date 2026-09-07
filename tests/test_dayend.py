@@ -156,6 +156,51 @@ class Drawers(DayEndTestCase):
         self.assertEqual(summary["shift_count"], 2)
         self.assertAlmostEqual(summary["variance_usd"], 1.0, places=2)
 
+    def test_the_three_cash_figures_always_add_up(self):
+        """Expected, counted and variance are printed as a column.
+
+        They were computed over different sets: expected covered every drawer,
+        counted and variance only the ones that had been counted. So the
+        moment a till was left open the sheet read 300 expected, 150 counted
+        and a variance of 0.00 underneath calling itself BALANCED -- 150
+        apparently missing, next to the word for nothing missing.
+        """
+        self.sell(1)
+        shifts_service.close_shift(self.shift_id, self.admin.user_id, counted_usd=120)
+        second = shifts_service.open_shift(self.admin.user_id, opening_float=100)
+        self.sell(1)
+
+        summary = dayend.day_summary()
+        self.assertIn(second, summary["open_shifts"])
+        # variance is counted - expected, so short reads negative.
+        self.assertAlmostEqual(
+            summary["counted_usd"] - summary["expected_counted_usd"],
+            summary["variance_usd"], places=2,
+        )
+
+    def test_money_in_an_open_till_is_named_rather_than_dropped(self):
+        self.sell(1)
+        shifts_service.close_shift(self.shift_id, self.admin.user_id, counted_usd=120)
+        shifts_service.open_shift(self.admin.user_id, opening_float=100)
+        self.sell(1)
+
+        summary = dayend.day_summary()
+        self.assertEqual(summary["expected_counted_usd"], 120)
+        self.assertEqual(summary["expected_open_usd"], 120)  # 100 float + 20 sale
+        self.assertEqual(
+            summary["expected_usd"],
+            summary["expected_counted_usd"] + summary["expected_open_usd"],
+            "the whole day is still the sum of both",
+        )
+
+    def test_with_every_till_closed_the_two_expected_figures_agree(self):
+        """The ordinary day must read exactly as it did before."""
+        self.sell(1)
+        shifts_service.close_shift(self.shift_id, self.admin.user_id, counted_usd=120)
+        summary = dayend.day_summary()
+        self.assertEqual(summary["expected_counted_usd"], summary["expected_usd"])
+        self.assertEqual(summary["expected_open_usd"], 0)
+
     def test_a_shift_from_another_day_is_not_included(self):
         db.execute(
             "UPDATE shifts SET opened_at = ? WHERE shift_id = ?",

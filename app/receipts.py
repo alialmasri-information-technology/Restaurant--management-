@@ -525,11 +525,20 @@ def build_day_report(summary, store, rate, rounding, layout: Layout) -> Builder:
         builder.add("small", f"   Variance ({label})", fmt_usd(variance))
 
     if summary["shift_count"]:
-        builder.add("normal", "Expected across the day", fmt_usd(summary["expected_usd"]))
+        # These three have to add up, or the reader stops trusting the sheet.
+        # They cover the drawers that were counted; a till still open is money
+        # nobody has counted yet, so it is named on its own line below rather
+        # than left in the expected figure looking like a shortfall.
+        builder.add("normal", "Expected", fmt_usd(summary["expected_counted_usd"]))
         builder.add("normal", "Counted", fmt_usd(summary["counted_usd"]))
         variance = D(summary["variance_usd"])
         label = "OVER" if variance > 0 else ("SHORT" if variance < 0 else "BALANCED")
         builder.add("total", f"VARIANCE ({label})", fmt_usd(variance))
+        if summary["expected_open_usd"]:
+            builder.add(
+                "small", "   Still in an open till (not counted)",
+                fmt_usd(summary["expected_open_usd"]),
+            )
 
     # -- 3. what is outstanding ---------------------------------------------- #
     account = summary["account"]
