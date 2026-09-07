@@ -198,6 +198,11 @@ cython_debug/
 .trio/run/
 .test-artifacts/
 
+# pytest drops these in the project root when it cannot create its basetemp
+# under the system Temp folder. They are left behind empty, and an empty
+# directory is invisible to git status, so they accumulate unnoticed.
+pytest-cache-files-*/
+
 # PyPI configuration file
 .pypirc
 
