@@ -9,7 +9,7 @@ import customtkinter as ctk
 
 from app import auth, config
 from app.services import settings as settings_service
-from tests.support import DatabaseTestCase
+from tests.support import DatabaseTestCase, destroy_tk_root
 
 try:
     from app.ui import onboarding
@@ -40,7 +40,7 @@ class FirstRunTests(DatabaseTestCase):
         super().setUp()
         self.root = ctk.CTk()
         self.root.withdraw()
-        self.addCleanup(self.root.destroy)
+        self.addCleanup(lambda: destroy_tk_root(self.root))
 
     def _admin(self):
         return auth.authenticate("admin", "admin123")

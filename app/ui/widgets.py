@@ -337,6 +337,10 @@ class Modal(ctk.CTkToplevel):
         super().__init__(parent)
         self.title(title)
         self.result = None
+        # Set before anything below can raise: a half-built modal is still in
+        # its parent's children, so destroying the parent will still call
+        # destroy() on it, and that reads this attribute.
+        self._grab_job: str | None = None
         self.configure(fg_color=theme.BG)
         self.resizable(False, False)
         self.transient(parent.winfo_toplevel())
@@ -352,9 +356,10 @@ class Modal(ctk.CTkToplevel):
         self.bind("<Escape>", lambda _event: self.on_cancel())
 
         # Grabbing too early races the window manager on Windows.
-        self.after(80, self._grab)
+        self._grab_job = self.after(80, self._grab)
 
     def _grab(self) -> None:
+        self._grab_job = None
         if not self.winfo_exists():
             return  # closed before the grab fired
         try:
@@ -362,6 +367,24 @@ class Modal(ctk.CTkToplevel):
             self.focus_force()
         except tk.TclError:  # pragma: no cover - window already gone
             pass
+
+    def destroy(self) -> None:
+        """Cancel the pending grab before the window goes.
+
+        ``destroy`` deletes the Tcl command behind :meth:`_grab` but leaves its
+        timer running, so a modal dismissed inside the 80ms lands Tcl on a
+        callback that no longer exists and it prints "invalid command name" to
+        stderr. Nothing breaks, and nothing is visible in a windowed build --
+        but it is a real error report for something that is not an error, and
+        those teach people to ignore the ones that are.
+        """
+        if self._grab_job is not None:
+            try:
+                self.after_cancel(self._grab_job)
+            except tk.TclError:  # pragma: no cover - fired a moment ago
+                pass
+            self._grab_job = None
+        super().destroy()
 
     def on_cancel(self) -> None:
         self.result = None

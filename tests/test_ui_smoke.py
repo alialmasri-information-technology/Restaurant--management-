@@ -22,7 +22,7 @@ from app.services import customers as customers_service
 from app.services import products as products_service
 from app.services import sales as sales_service
 from app.services import suppliers as suppliers_service
-from tests.support import DatabaseTestCase
+from tests.support import DatabaseTestCase, destroy_tk_root
 
 try:
     import tkinter as tk
@@ -68,26 +68,6 @@ class DisplayPromiseTests(unittest.TestCase):
         )
 
 
-def _tear_down(root) -> None:
-    """Destroy a Tk root without the usual burst of Tcl background errors.
-
-    CustomTkinter schedules deferred work with ``after`` — icon fixes, focus
-    grabs. Destroying the root while any of it is still queued makes Tcl shout
-    about an invalid command for every one. Cancelling first keeps the test
-    output readable.
-    """
-    try:
-        for job in root.tk.call("after", "info"):
-            try:
-                root.after_cancel(job)
-            except Exception:  # noqa: BLE001 - already fired
-                pass
-        root.update_idletasks()
-        root.destroy()
-    except Exception:  # noqa: BLE001 - already gone
-        pass
-
-
 @unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
 class ViewSmokeTests(DatabaseTestCase):
     """Every navigable screen builds and refreshes with data behind it."""
@@ -100,7 +80,7 @@ class ViewSmokeTests(DatabaseTestCase):
         self.addCleanup(self._destroy_root)
 
     def _destroy_root(self) -> None:
-        _tear_down(self.root)
+        destroy_tk_root(self.root)
 
     def _seed(self) -> None:
         supplier_id = suppliers_service.create_supplier(name="Test Supplier")
@@ -208,7 +188,7 @@ class StockTakeScreenTests(DatabaseTestCase):
         self.addCleanup(self._destroy_root)
 
     def _destroy_root(self) -> None:
-        _tear_down(self.root)
+        destroy_tk_root(self.root)
 
     def test_the_sheet_renders_and_scanning_updates_it(self):
         from app.ui.shell import AppShell
@@ -242,7 +222,7 @@ class TillMoneyInputTests(DatabaseTestCase):
         )
         self.root = ctk.CTk()
         self.root.withdraw()
-        self.addCleanup(lambda: _tear_down(self.root))
+        self.addCleanup(lambda: destroy_tk_root(self.root))
 
     def _till(self):
         from app.ui.shell import AppShell
@@ -342,7 +322,7 @@ class CustomerAccountScreenTests(DatabaseTestCase):
         self.addCleanup(self._destroy_root)
 
     def _destroy_root(self) -> None:
-        _tear_down(self.root)
+        destroy_tk_root(self.root)
 
     def _shell(self):
         from app.ui.shell import AppShell
@@ -414,7 +394,7 @@ class DayReportSmokeTests(DatabaseTestCase):
 
         self.root = ctk.CTk()
         self.root.withdraw()
-        self.addCleanup(lambda: _tear_down(self.root))
+        self.addCleanup(lambda: destroy_tk_root(self.root))
 
     def _shell(self):
         from app.ui.shell import AppShell
@@ -474,7 +454,7 @@ class BriefingSmokeTests(DatabaseTestCase):
         backups_service.create("test")
         self.root = ctk.CTk()
         self.root.withdraw()
-        self.addCleanup(lambda: _tear_down(self.root))
+        self.addCleanup(lambda: destroy_tk_root(self.root))
 
     def _dashboard(self):
         from app.ui.shell import AppShell
@@ -550,7 +530,7 @@ class DebounceTests(DatabaseTestCase):
         self.addCleanup(self._destroy_root)
 
     def _destroy_root(self) -> None:
-        _tear_down(self.root)
+        destroy_tk_root(self.root)
 
     def _settle(self, condition) -> bool:
         """Pump the event loop until the deferred call runs, or fail trying."""
@@ -584,3 +564,33 @@ class DebounceTests(DatabaseTestCase):
         keystroke()
         self.assertTrue(self._settle(lambda: len(calls) > 1))
         self.assertEqual(len(calls), 2)
+
+
+@unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
+class ModalTeardownTests(DatabaseTestCase):
+    """A modal that is closed at once must not leave a timer pointing at it."""
+
+    opens_shift = False
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(lambda: destroy_tk_root(self.root))
+
+    def test_dismissing_a_modal_cancels_its_pending_grab(self):
+        """Otherwise Tcl reaches a callback whose command destroy() deleted.
+
+        It reports that as "invalid command name ..." on stderr, which is an
+        error message for something that is not an error -- and a shop looking
+        at a log full of those has no way to spot the one that matters.
+        """
+        from app.ui import widgets
+
+        modal = widgets.Modal(self.root, "Closed straight away")
+        job = modal._grab_job
+        self.assertIsNotNone(job, "the grab was never scheduled, so this proves nothing")
+        self.assertIn(job, self.root.tk.call("after", "info"))
+
+        modal.destroy()
+        self.assertNotIn(job, self.root.tk.call("after", "info"))
