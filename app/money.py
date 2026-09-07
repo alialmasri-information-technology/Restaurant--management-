@@ -9,24 +9,54 @@ configurable step because nobody hands out 1 LBP in change.
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, DecimalException
 
 CENT = Decimal("0.01")
 ZERO = Decimal("0")
 
 
 def D(value) -> Decimal:
-    """Coerce anything money-ish to Decimal without going through binary float."""
+    """Coerce anything money-ish to Decimal without going through binary float.
+
+    Raises ``ValueError`` for anything that is not a usable amount, which is
+    what every caller here already expects to have to handle.
+
+    The awkward cases are the words :mod:`decimal` accepts and a till does not.
+    ``Decimal("nan")`` and ``Decimal("inf")`` are both perfectly valid Decimals,
+    so a cashier typing "nan" into the discount box used to get through this
+    function untouched. NaN then raised ``InvalidOperation`` -- an
+    ``ArithmeticError``, not a ``ValueError`` -- from the first comparison that
+    tried to order it, straight past the handler that was meant to turn a bad
+    amount into a message. Infinity got further still: it parsed, it compared,
+    and it blew up later inside :func:`usd`, a long way from the box it was
+    typed into. Neither is money, so neither gets past here.
+    """
     if isinstance(value, Decimal):
-        return value
-    if value is None or value == "":
+        number = value
+    elif value is None or value == "":
         return ZERO
-    return Decimal(str(value).strip().replace(",", ""))
+    else:
+        try:
+            number = Decimal(str(value).strip().replace(",", ""))
+        except DecimalException as exc:
+            raise ValueError(f"{value!r} is not a number.") from exc
+    if not number.is_finite():
+        raise ValueError(f"{value!r} is not a usable amount.")
+    return number
 
 
 def usd(value) -> Decimal:
-    """Round to whole cents, half-up (what a till does, unlike banker's rounding)."""
-    return D(value).quantize(CENT, rounding=ROUND_HALF_UP)
+    """Round to whole cents, half-up (what a till does, unlike banker's rounding).
+
+    A number can be finite and still not be money: "1e999" parses, compares and
+    adds quite happily, then fails here because a thousand digits will not fit
+    in the working precision. Reported as a ValueError like every other amount
+    that cannot be used, rather than as an ArithmeticError nobody catches.
+    """
+    try:
+        return D(value).quantize(CENT, rounding=ROUND_HALF_UP)
+    except DecimalException as exc:
+        raise ValueError(f"{value!r} is too large to be an amount of money.") from exc
 
 
 def to_float(value) -> float:
@@ -67,6 +97,12 @@ def parse_amount(text, field="amount") -> Decimal:
         raise ValueError(f"{field.capitalize()} must be a number.") from exc
     if value < ZERO:
         raise ValueError(f"{field.capitalize()} cannot be negative.")
+    # Checked here, at the box it was typed into, rather than left to surface
+    # from whatever arithmetic touches it first.
+    try:
+        usd(value)
+    except ValueError as exc:
+        raise ValueError(f"{field.capitalize()} is too large.") from exc
     return value
 
 

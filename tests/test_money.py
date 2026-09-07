@@ -6,6 +6,7 @@ import unittest
 from decimal import Decimal
 
 from app.money import (
+    D,
     compute_totals,
     fmt_lbp,
     fmt_usd,
@@ -142,6 +143,48 @@ class NegativeFormattingTests(unittest.TestCase):
     def test_zero_carries_no_sign(self):
         self.assertEqual(fmt_usd(0), "$0.00")
         self.assertEqual(fmt_lbp(0), "0 LBP")
+
+
+class WordsThatLookLikeNumbersTests(unittest.TestCase):
+    """decimal accepts several words a till must not.
+
+    Decimal("nan") and Decimal("inf") are both valid Decimals, so they used to
+    walk straight through parse_amount and fail somewhere else entirely: NaN
+    from the first comparison that tried to order it, infinity from whatever
+    arithmetic touched it next. Both raised InvalidOperation, an ArithmeticError
+    rather than a ValueError, so the handler that turns a bad amount into a
+    message never saw them -- the till button simply did nothing.
+    """
+
+    REFUSED = ("nan", "NaN", "  nan  ", "snan", "inf", "-inf", "Infinity", "iNfInItY")
+
+    def test_the_discount_box_refuses_them_as_plain_bad_input(self):
+        for text in self.REFUSED:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_amount(text, "discount")
+
+    def test_they_cannot_reach_the_arithmetic_through_D_either(self):
+        for value in ("nan", "inf", float("inf"), float("nan"), Decimal("NaN")):
+            with self.subTest(value=repr(value)), self.assertRaises(ValueError):
+                D(value)
+
+    def test_a_number_too_big_to_be_money_is_refused_where_it_is_typed(self):
+        """1e999 is finite, so it parses and adds; it just is not money.
+
+        It failed inside usd() a long way from the box, which is the same
+        problem in a different disguise.
+        """
+        with self.assertRaises(ValueError):
+            parse_amount("1e999", "discount")
+        with self.assertRaises(ValueError):
+            usd("1e999")
+
+    def test_ordinary_amounts_are_untouched(self):
+        self.assertEqual(parse_amount("12.50"), Decimal("12.50"))
+        self.assertEqual(parse_amount("1,250.00"), Decimal("1250.00"))
+        self.assertEqual(parse_amount(""), Decimal("0"))
+        # Well inside what a shop could ever ring up, and still allowed.
+        self.assertEqual(parse_amount("1e10"), Decimal("1E+10"))
 
 
 if __name__ == "__main__":
