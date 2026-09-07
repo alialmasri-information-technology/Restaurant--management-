@@ -5,6 +5,38 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [2.7.2] — 2026-09-07
+
+No schema change and no change to what the application does. It says who it is
+when Windows asks.
+
+### Added
+
+**The executable carries a version resource.** Right-click RE4.exe, Properties,
+Details — until now that tab was blank. It is the first place anyone looks when
+a shop has two tills and cannot tell which one is behind, and it is what
+deployment tooling reads when deciding whether a machine needs updating. The
+file now states its version, its product and company name, and a description
+that reads sensibly beside the process in Task Manager.
+
+The number is not written into the build script. It is read from the same
+constant the application reports when asked for its version, so the two cannot
+come apart.
+
+Windows asks for a fourth number after the three this project keeps; it is zero
+rather than something invented. The copyright field is left empty for the same
+reason — the repository names no holder, and a version resource is the wrong
+place to decide one.
+
+### Tests
+
+The version is declared in four places that have to agree: the application, the
+package metadata, the installer and this file. Until now a comment in
+`installer.iss` asked whoever was releasing to keep them in step. A release with
+the application reporting one number and the installer producing a file named
+after another would have built, passed and published, and only been noticed by
+whoever downloaded the odd-looking file. That is now checked.
+
 ## [2.7.1] — 2026-09-07
 
 No schema change, and nothing to relearn. One thing on screen was wrong to

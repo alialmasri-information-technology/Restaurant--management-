@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "re4"
-version = "2.7.1"
+version = "2.7.2"
 description = "Offline point-of-sale and stock control for small shops, priced in USD and settled in USD and LBP."
 readme = "README.md"
 requires-python = ">=3.10"
