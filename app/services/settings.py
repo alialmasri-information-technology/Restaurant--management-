@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from app import config, db, logs
-from app.money import D
+from app.money import ZERO, D
 
 
 def get(key: str, default: str | None = None) -> str:
@@ -65,13 +65,41 @@ def _decimal(key: str, fallback: str) -> Decimal:
 
 
 def exchange_rate() -> Decimal:
-    """LBP per 1 USD."""
-    return _decimal("exchange_rate", config.DEFAULT_SETTINGS["exchange_rate"])
+    """LBP per 1 USD. Never zero or negative, whatever the row says.
+
+    Selling refuses a non-positive rate outright, so no sale can be recorded
+    at one. Everything that only *shows* a number would carry on, though:
+    every LBP total on the till, the receipts and the shelf labels would read
+    zero, and the first anyone would know of it is a sale being turned away at
+    the counter. The screen should not be the last to find out.
+    """
+    rate = _decimal("exchange_rate", config.DEFAULT_SETTINGS["exchange_rate"])
+    if rate <= ZERO:
+        fallback = D(config.DEFAULT_SETTINGS["exchange_rate"])
+        logs.error(
+            "The exchange rate is set to %s, which cannot be used; showing %s instead",
+            rate, fallback,
+        )
+        return fallback
+    return rate
 
 
 def tax_rate() -> Decimal:
-    """Tax percentage applied to the discounted subtotal."""
-    return _decimal("tax_rate", config.DEFAULT_SETTINGS["tax_rate"])
+    """Tax percentage applied to the discounted subtotal.
+
+    A negative rate would hand money back on every line and a rate above 100%
+    would charge more tax than the goods cost. Neither is a thing a shop means,
+    and the settings screen refuses both -- this is for a row that got past it.
+    """
+    rate = _decimal("tax_rate", config.DEFAULT_SETTINGS["tax_rate"])
+    if rate < ZERO or rate > 100:
+        fallback = D(config.DEFAULT_SETTINGS["tax_rate"])
+        logs.error(
+            "The tax rate is set to %s, which is not a usable percentage; "
+            "charging %s instead", rate, fallback,
+        )
+        return fallback
+    return rate
 
 
 def lbp_rounding() -> Decimal:
