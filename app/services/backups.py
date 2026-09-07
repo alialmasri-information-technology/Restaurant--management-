@@ -67,6 +67,10 @@ def list_backups() -> list[dict]:
         try:
             stat = path.stat()
         except OSError:
+            # Leaving it out of the list is right - it cannot be restored from
+            # - but doing so without a word would have the shop believe it has
+            # one backup fewer than it does.
+            logs.warning("Could not read the backup %s; leaving it off the list", path)
             continue
         entries.append({
             "path": path,
