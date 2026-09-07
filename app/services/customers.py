@@ -6,6 +6,7 @@ import re
 import sqlite3
 
 from app import db
+from app.money import ZERO, D, fmt_usd
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -114,7 +115,52 @@ def update_customer(
 
 
 def delete_customer(customer_id: int) -> None:
-    """Past sales keep their invoice and simply revert to a walk-in sale."""
+    """Delete a customer whose account is settled and who is holding nothing.
+
+    Past sales keep their invoice and revert to a walk-in sale, which is what
+    ``ON DELETE SET NULL`` on ``sales.customer_id`` is for, and is all this
+    used to say.
+
+    The ledger is not so forgiving. ``customer_ledger.customer_id`` cascades,
+    so deleting someone who owed $500 took the record of the debt with them:
+    the ledger rows went, the balance stopped existing, and the day's
+    receivable total dropped by $500 with nothing to show why. A shop tidying
+    up its customer list would have had no way of knowing it had just written
+    off what it was owed. Settle the account or adjust it to zero first, so
+    that writing a debt off is a thing someone decides to do rather than a
+    side effect of housekeeping.
+
+    A layaway still held is money in the same way: goods set aside against a
+    deposit already taken. Its ``customer_id`` is set to null rather than
+    deleted, which leaves a parcel on a shelf with nobody's name on it.
+    """
+    customer = get_customer(customer_id)
+    if customer is None:
+        raise CustomerError("Customer not found.")
+
+    balance = D(customer["balance_usd"])
+    if balance != ZERO:
+        owed = (
+            f"still owes {fmt_usd(balance)}" if balance > ZERO
+            else f"is owed {fmt_usd(-balance)}"
+        )
+        raise CustomerError(
+            f"{customer['name']} {owed}. Settle the account, or adjust it to "
+            f"zero if you are writing it off, before deleting the customer — "
+            f"deleting them now would take the record of it with them."
+        )
+
+    held = db.scalar(
+        "SELECT COUNT(*) FROM layaways WHERE customer_id = ? AND status = 'Held'",
+        (customer_id,),
+        default=0,
+    )
+    if held:
+        raise CustomerError(
+            f"{customer['name']} has {held} layaway(s) still held. Collect or "
+            f"cancel them first, or the goods stay set aside with no name on them."
+        )
+
     db.execute("DELETE FROM customers WHERE customer_id = ?", (customer_id,))
 
 

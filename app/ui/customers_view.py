@@ -176,11 +176,16 @@ class CustomersView(ctk.CTkFrame):
         if not ask_confirm(
             self,
             f"Delete {customer['name']}?\n\nPast invoices are kept and become "
-            f"walk-in sales.",
+            f"walk-in sales. An account with money on it either way cannot be "
+            f"deleted; settle it first.",
             "Delete customer",
         ):
             return
-        customers_service.delete_customer(customer["customer_id"])
+        try:
+            customers_service.delete_customer(customer["customer_id"])
+        except customers_service.CustomerError as exc:
+            show_error(self, exc, "Could not delete the customer")
+            return
         self.refresh()
         self.shell.invalidate("pos", "invoices")
 
