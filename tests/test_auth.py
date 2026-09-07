@@ -56,6 +56,60 @@ class AuthenticationTests(DatabaseTestCase):
         self.assertEqual(auth.authenticate("sara", "secret123").username, "Sara")
 
 
+class UsernameEnumerationTests(DatabaseTestCase):
+    """Refusing an unknown username must cost what refusing a wrong one does.
+
+    Sign-in verifies against a hash even when there is no such user, so that
+    the two answers take the same time. That check was hashing at a fixed
+    1,000 iterations while real passwords are stored at 260,000, so "no such
+    user" came back about a hundred times faster: 0.9ms against 99ms measured
+    at the production work factor. Anyone could learn which usernames exist by
+    timing the refusal, which is the single thing the check exists to stop.
+
+    Asserted on the work factor rather than on a stopwatch, because a clock is
+    the flakiest thing to put in a test suite and the iteration count is what
+    actually went wrong.
+    """
+
+    opens_shift = False
+
+    def test_the_absent_user_hash_matches_a_real_one(self):
+        real = auth.hash_password("whatever")
+        absent = auth._absent_user_hash()
+        self.assertEqual(
+            absent.split("$")[1],
+            real.split("$")[1],
+            "an unknown username is verified at a different work factor from a "
+            "real password, so refusing it takes a different amount of time",
+        )
+
+    def test_it_is_a_hash_that_is_really_checked(self):
+        """A constant that no password matches would skip the work entirely."""
+        absent = auth._absent_user_hash()
+        self.assertTrue(auth.verify_password("no such user", absent))
+        self.assertFalse(auth.verify_password("anything else", absent))
+
+    def test_changing_the_work_factor_is_followed(self):
+        """Tests lower ITERATIONS; the absent-user hash has to move with it."""
+        first = auth._absent_user_hash()
+        original = auth.ITERATIONS
+        try:
+            auth.ITERATIONS = original + 1
+            second = auth._absent_user_hash()
+        finally:
+            auth.ITERATIONS = original
+        self.assertEqual(second.split("$")[1], str(original + 1))
+        self.assertEqual(auth._absent_user_hash(), first, "the first one is reused")
+
+    def test_both_refusals_look_the_same_to_the_person_signing_in(self):
+        auth.create_user("someone", "a-real-password", config.ROLE_EMPLOYEE)
+        with self.assertRaises(auth.AuthError) as wrong:
+            auth.authenticate("someone", "not-the-password")
+        with self.assertRaises(auth.AuthError) as missing:
+            auth.authenticate("nobody-at-all", "not-the-password")
+        self.assertEqual(str(wrong.exception), str(missing.exception))
+
+
 class UserManagementTests(DatabaseTestCase):
     def test_duplicate_username_is_refused(self):
         with self.assertRaises(auth.AuthError):

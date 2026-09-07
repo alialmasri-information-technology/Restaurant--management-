@@ -98,6 +98,30 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 
+#: Hashes to check an unknown username against, keyed by the work factor they
+#: were made with. Built once each: deriving a fresh one per attempt would cost
+#: a second PBKDF2 run and make a missing account the *slower* answer.
+_ABSENT_USER_HASHES: dict[int, str] = {}
+
+
+def _absent_user_hash() -> str:
+    """A real hash, at the current work factor, for a username that is not there.
+
+    Sign-in verifies against this so that no account and a wrong password take
+    the same time. It used to hash at a fixed 1,000 iterations while real
+    passwords are stored at 260,000, which made "no such user" answer about a
+    hundred times faster -- 0.9ms against 99ms when measured. Anyone could
+    learn which usernames exist by timing the refusal, which is the one thing
+    the check was there to prevent.
+    """
+    iterations = ITERATIONS
+    if iterations not in _ABSENT_USER_HASHES:
+        _ABSENT_USER_HASHES[iterations] = hash_password(
+            "no such user", iterations=iterations
+        )
+    return _ABSENT_USER_HASHES[iterations]
+
+
 def _row_to_user(row: sqlite3.Row) -> User:
     return User(
         user_id=row["user_id"],
@@ -310,9 +334,9 @@ def authenticate(username: str, password: str) -> User:
         raise AccountLocked(_describe_lockout(remaining), remaining)
 
     row = db.query_one("SELECT * FROM users WHERE username = ?", (username,))
-    # Hash regardless of whether the user exists so a missing account and a
-    # wrong password take the same amount of time.
-    stored = row["password_hash"] if row else hash_password("dummy", iterations=1000)
+    # Verify against a real hash even when the username does not exist, so that
+    # a missing account and a wrong password take the same amount of time.
+    stored = row["password_hash"] if row else _absent_user_hash()
     if not verify_password(password, stored) or row is None:
         locked_for = _register_failure(username)
         # Recorded without an actor: a failed attempt has no signed-in user, and
