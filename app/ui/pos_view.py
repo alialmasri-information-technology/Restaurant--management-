@@ -20,6 +20,7 @@ from app.ui.shell import PageHeader
 from app.ui.widgets import (
     Card,
     DataTable,
+    DefersWork,
     FormModal,
     Modal,
     SectionTitle,
@@ -32,7 +33,7 @@ from app.ui.widgets import (
 WALK_IN = "Walk-in customer"
 
 
-class PosView(ctk.CTkFrame):
+class PosView(DefersWork, ctk.CTkFrame):
     def __init__(self, parent, shell):
         super().__init__(parent, fg_color="transparent")
         self.shell = shell
@@ -953,7 +954,7 @@ class PosView(ctk.CTkFrame):
         self._render_cart()
         self._refresh_parked_button()
         self._check_till()
-        self.after(100, self.search_entry.focus_set)
+        self.defer(100, self.search_entry.focus_set)
 
     def _check_till(self) -> None:
         """Say so up front when the till is shut, rather than at checkout."""

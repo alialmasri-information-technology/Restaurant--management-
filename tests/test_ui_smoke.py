@@ -638,9 +638,8 @@ class ModalTeardownTests(DatabaseTestCase):
             pass
 
         dialog = BareDialog(self.root)
-        dialog.claim_keyboard()
-        job = dialog._grab_job
-        self.assertIsNotNone(job)
+        job = dialog.defer(80, dialog._grab)
+        self.assertIn(job, dialog._deferred)
         self.assertIn(job, self.root.tk.call("after", "info"))
 
         dialog.destroy()
@@ -655,6 +654,39 @@ class ModalTeardownTests(DatabaseTestCase):
 
         BareDialog(self.root).destroy()  # must not raise
 
+    def test_a_form_closed_at_once_leaves_no_focus_timer(self):
+        """FormModal defers putting the cursor in the first box by 120ms.
+
+        "_focus_first" was one of the names in the burst of Tcl errors that
+        started all this, so this is the case that was actually happening
+        rather than one that could.
+        """
+        from app.ui import widgets
+
+        form = widgets.FormModal(
+            self.root, "Quick", [{"key": "name", "label": "Name"}]
+        )
+        pending = set(form._deferred or ())
+        self.assertGreaterEqual(
+            len(pending), 2, "expected both the grab and the focus to be pending"
+        )
+        form.destroy()
+        self.assertEqual(pending & set(self.root.tk.call("after", "info")), set())
+
+    def test_a_screen_swapped_out_at_once_leaves_no_focus_timer(self):
+        """The sign-in frame goes the moment the password is accepted.
+
+        On a remembered password that is comfortably inside the 150ms it waits
+        before putting the cursor in the username box.
+        """
+        from app.ui.login import LoginView
+
+        view = LoginView(self.root, lambda _user: None)
+        pending = set(view._deferred or ())
+        self.assertTrue(pending, "nothing was deferred, so this proves nothing")
+        view.destroy()
+        self.assertEqual(pending & set(self.root.tk.call("after", "info")), set())
+
     def test_dismissing_a_modal_cancels_its_pending_grab(self):
         """Otherwise Tcl reaches a callback whose command destroy() deleted.
 
@@ -665,9 +697,10 @@ class ModalTeardownTests(DatabaseTestCase):
         from app.ui import widgets
 
         modal = widgets.Modal(self.root, "Closed straight away")
-        job = modal._grab_job
-        self.assertIsNotNone(job, "the grab was never scheduled, so this proves nothing")
-        self.assertIn(job, self.root.tk.call("after", "info"))
+        pending = set(modal._deferred or ())
+        self.assertTrue(pending, "nothing was deferred, so this proves nothing")
+        self.assertTrue(pending <= set(self.root.tk.call("after", "info")))
 
         modal.destroy()
-        self.assertNotIn(job, self.root.tk.call("after", "info"))
+        still_queued = pending & set(self.root.tk.call("after", "info"))
+        self.assertEqual(still_queued, set())

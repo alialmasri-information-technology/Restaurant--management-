@@ -330,52 +330,75 @@ class LabeledEntry(ctk.CTkFrame):
 # Modal dialogs
 # --------------------------------------------------------------------------- #
 
-class GrabsKeyboard:
-    """Claims the keyboard shortly after a window appears, and lets go cleanly.
+class DefersWork:
+    """Schedules deferred callbacks and cancels whatever is still pending.
 
-    Mix in before the Tk base class. Six dialogs across four modules had each
-    written this out by hand, so a fix to one reached none of the others.
+    Mix in before the Tk base class, then use :meth:`defer` instead of
+    ``after``. Screens and dialogs across this package defer a little work at
+    construction -- claiming the keyboard, putting the cursor in the first box
+    -- because doing it immediately races the window manager on Windows.
 
-    Grabbing the moment the window is created races the window manager on
-    Windows, so it is deferred. Deferring it means the window can be closed
-    before it fires, and that is where the care is needed: ``destroy`` deletes
-    the Tcl command behind the callback but leaves the timer standing, so Tcl
-    keeps the appointment, finds nothing there, and writes "invalid command
-    name" to stderr. Nothing breaks, and in a windowed build nobody sees it --
-    which is the trouble, because a genuine Tk error looks exactly the same.
+    Deferring means the widget can be gone before the callback comes due, and
+    that is the part every one of them got wrong. ``destroy`` deletes the Tcl
+    command behind the callback but leaves the timer standing, so Tcl keeps the
+    appointment, finds nothing there, and writes "invalid command name" to
+    stderr. Nothing breaks, and in a windowed build nobody sees it -- which is
+    the trouble, because a genuine Tk error looks exactly the same and is how
+    an actual fault would announce itself.
 
-    It also means the ``winfo_exists`` check below can never be what saves us:
-    by the time the window is gone, so is the command, and Tcl never reaches
-    Python to ask. Cancelling on the way out is what the check was reaching
-    for; it is kept only for a caller that invokes :meth:`_grab` directly.
+    It is also why the ``winfo_exists()`` check several of them opened with
+    could never have helped: by the time the widget is gone, so is the command,
+    and Tcl never reaches Python to ask. Cancelling is what those checks were
+    reaching for.
     """
 
-    #: Held on the class so a window whose __init__ raises part-way through
+    #: Held on the class, so a widget whose __init__ raises part-way through
     #: still answers destroy() -- it is in its parent's children by then, and
     #: destroying the parent will call it.
-    _grab_job: str | None = None
+    _deferred: set[str] | None = None
+
+    def defer(self, delay_ms: int, callback) -> str:
+        """Run ``callback`` later, and forget it if this widget goes first."""
+        def run() -> None:
+            if self._deferred is not None:
+                self._deferred.discard(job)
+            callback()
+
+        job = self.after(delay_ms, run)
+        if self._deferred is None:
+            self._deferred = set()
+        self._deferred.add(job)
+        return job
+
+    def destroy(self) -> None:
+        for job in tuple(self._deferred or ()):
+            try:
+                self.after_cancel(job)
+            except tk.TclError:  # pragma: no cover - fired a moment ago
+                pass
+        self._deferred = None
+        super().destroy()
+
+
+class GrabsKeyboard(DefersWork):
+    """Claims the keyboard shortly after a window appears, and lets go cleanly.
+
+    Six dialogs across four modules had these few lines written out by hand, so
+    a fix to one reached none of the others. See :class:`DefersWork` for why the
+    cancellation matters.
+    """
 
     def claim_keyboard(self, delay_ms: int = 80) -> None:
-        self._grab_job = self.after(delay_ms, self._grab)
+        self.defer(delay_ms, self._grab)
 
     def _grab(self) -> None:
-        self._grab_job = None
         if not self.winfo_exists():
-            return  # closed before the grab fired
+            return  # only reachable if something calls this directly
         try:
             self.grab_set()
             self.focus_force()
         except tk.TclError:  # pragma: no cover - window already gone
             pass
-
-    def destroy(self) -> None:
-        if self._grab_job is not None:
-            try:
-                self.after_cancel(self._grab_job)
-            except tk.TclError:  # pragma: no cover - fired a moment ago
-                pass
-            self._grab_job = None
-        super().destroy()
 
 
 class Modal(GrabsKeyboard, ctk.CTkToplevel):
@@ -456,7 +479,7 @@ class FormModal(Modal):
         ).grid(row=0, column=2)
 
         self.bind("<Return>", lambda _event: self.submit())
-        self.after(120, self._focus_first)
+        self.defer(120, self._focus_first)
 
     def _build_field(self, body, index: int, field: dict) -> None:
         key = field["key"]

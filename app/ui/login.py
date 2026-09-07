@@ -6,10 +6,10 @@ import customtkinter as ctk
 
 from app import auth, config, db
 from app.ui import phrasing, theme
-from app.ui.widgets import Card
+from app.ui.widgets import Card, DefersWork
 
 
-class LoginView(ctk.CTkFrame):
+class LoginView(DefersWork, ctk.CTkFrame):
     def __init__(self, parent, on_success):
         super().__init__(parent, fg_color=theme.BG)
         self.on_success = on_success
@@ -73,13 +73,15 @@ class LoginView(ctk.CTkFrame):
 
         for widget in (self, self.username_entry, self.password_entry):
             widget.bind("<Return>", lambda _event: self.attempt_login())
-        # Guarded: the frame can be swapped out before a deferred focus fires,
-        # and an unguarded one then raises from inside Tcl's event loop.
-        self.after(150, self._focus_username)
+        # The frame is swapped out the moment a sign-in succeeds, which can
+        # easily be inside 150ms on a remembered password. defer() cancels
+        # the pending focus on the way out; the winfo_exists() check this
+        # used to open with could not, because destroy() had already taken
+        # the callback with it.
+        self.defer(150, self._focus_username)
 
     def _focus_username(self) -> None:
-        if self.winfo_exists():
-            self.username_entry.focus_set()
+        self.username_entry.focus_set()
 
     def _first_run_hint(self) -> str:
         """Only reveal the bootstrap credentials while they are still in place.

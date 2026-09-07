@@ -12,10 +12,10 @@ import customtkinter as ctk
 
 from app import auth, config, logs
 from app.ui import theme
-from app.ui.widgets import Card, GrabsKeyboard, show_info
+from app.ui.widgets import Card, DefersWork, GrabsKeyboard, show_info
 
 
-class LockScreen(ctk.CTkFrame):
+class LockScreen(DefersWork, ctk.CTkFrame):
     """Covers the signed-in shell until the operator re-enters their password."""
 
     def __init__(self, parent, user, on_unlock, on_sign_out, reason: str = ""):
@@ -77,11 +77,10 @@ class LockScreen(ctk.CTkFrame):
         ).grid(row=7, column=0, sticky="ew", padx=36, pady=(8, 24))
 
         self.entry.bind("<Return>", lambda _event: self.attempt())
-        self.after(120, self._focus_entry)
+        self.defer(120, self._focus_entry)
 
     def _focus_entry(self) -> None:
-        if self.winfo_exists():
-            self.entry.focus_set()
+        self.entry.focus_set()
 
     def attempt(self) -> None:
         self.message.configure(text="")
@@ -197,7 +196,7 @@ class ForcedPasswordChange(GrabsKeyboard, ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self.abandon)
         self.claim_keyboard()
         if first_entry is not None:
-            self.after(140, lambda: first_entry.winfo_exists() and first_entry.focus_set())
+            self.defer(140, first_entry.focus_set)
 
     def submit(self) -> None:
         self.message.configure(text="")
