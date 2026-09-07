@@ -463,6 +463,19 @@ def transaction():
     other freely (the CSV importer creates categories and suppliers inside its
     own transaction), and without this an inner ``db.execute`` would commit the
     outer unit of work halfway through and defeat its rollback.
+
+    Only the outermost block *rolls back*, too, and that is the constraint this
+    buys: an inner block does not undo itself. Catch the error an inner block
+    raises and carry on, and its half-written rows are still there when the
+    outer block commits. So never swallow one -- let it reach the outermost
+    block, which is the only place that can undo anything. There is a test
+    that reads this package looking for anyone who does.
+
+    Nested SAVEPOINTs would lift that restriction, but not here: sqlite3 opens
+    a transaction lazily, at the first write, so an inner SAVEPOINT taken
+    before the outer block has written anything would be the outermost one --
+    and releasing it commits. The unit of work would end early, at exactly the
+    moment the nesting was supposed to protect it.
     """
     conn = get_connection()
     depth = getattr(_local, "depth", 0)
