@@ -27,10 +27,25 @@ def acquire() -> bool:
         import ctypes
 
         ERROR_ALREADY_EXISTS = 183
-        handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\RE4-SingleInstance")
+        # Declared rather than left to ctypes' defaults, which are wrong here in
+        # two ways. A HANDLE is pointer-sized, and the default return type is a
+        # 32-bit int, so a handle above 2^31 would come back truncated or
+        # negative -- rare, because Windows hands out small handles, and silent
+        # when it happens. And the last-error value has to be read through
+        # use_last_error: ctypes keeps its own copy per thread, so calling
+        # GetLastError as an ordinary function can report what ctypes last
+        # stored rather than what CreateMutexW just set.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+        handle = kernel32.CreateMutexW(None, False, "Local\\RE4-SingleInstance")
+        already_running = ctypes.get_last_error() == ERROR_ALREADY_EXISTS
         if not handle:  # pragma: no cover - cannot refuse what we cannot test
             return True
-        if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        if already_running:
+            kernel32.CloseHandle(handle)
             return False
         _mutex = handle
         return True
@@ -64,7 +79,9 @@ def release() -> None:
     if sys.platform.startswith("win"):
         import ctypes
 
-        ctypes.windll.kernel32.CloseHandle(_mutex)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle(_mutex)
     else:
         import fcntl
 
