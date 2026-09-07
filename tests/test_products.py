@@ -126,6 +126,33 @@ class StockTests(DatabaseTestCase):
         service.delete_product(self.product_id)
         self.assertIsNone(service.get_product(self.product_id))
 
+    def test_a_counted_product_is_archived_rather_than_deleted(self):
+        """stock_take_items cascades, so deleting one edits the count.
+
+        A sheet that had found three units missing went back to reporting no
+        variance at all, with nothing to say a line had ever been on it. A
+        shortage that disappears when someone deletes the product is worse
+        than not counting.
+        """
+        from app.services import stocktake
+
+        take_id = stocktake.open_count(self.admin.user_id)
+        stocktake.record_count(take_id, self.product_id, 7)
+        before = stocktake.summarise(stocktake.list_items(take_id))
+        self.assertEqual(before["shortage_units"], 3)
+
+        with self.assertRaises(service.ProductError):
+            service.delete_product(self.product_id)
+
+        # Archived, not gone, and the sheet still says what it found.
+        product = service.get_product(self.product_id)
+        self.assertIsNotNone(product)
+        self.assertEqual(product["is_active"], 0)
+        after = stocktake.summarise(stocktake.list_items(take_id))
+        self.assertEqual(after["shortage_units"], 3)
+        self.assertEqual(after["line_count"], before["line_count"])
+        self.assertEqual(stocktake.variance_value(take_id), -6)
+
 
 class CategoryTests(DatabaseTestCase):
     def test_create_rename_delete(self):

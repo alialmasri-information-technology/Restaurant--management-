@@ -332,12 +332,21 @@ def delete_product(product_id: int) -> None:
         "SELECT COUNT(*) FROM purchase_order_items WHERE product_id = ?",
         (product_id,), default=0,
     )
-    if sold or ordered:
+    # stock_take_items cascades, so deleting a counted product takes its line
+    # off the sheet without a word. A count that had found three units missing
+    # went back to reporting no variance at all -- and a shortage that can be
+    # made to disappear by deleting the product is worse than no count at all.
+    counted = db.scalar(
+        "SELECT COUNT(*) FROM stock_take_items WHERE product_id = ?",
+        (product_id,), default=0,
+    )
+    if sold or ordered or counted:
         set_active(product_id, False)
         audit.record("Product archived", "product", product_id, product["name"])
         raise ProductError(
-            "This product appears on past invoices or purchase orders, so it was "
-            "archived instead of deleted. It no longer shows up when making a sale."
+            "This product appears on past invoices, purchase orders or stock "
+            "takes, so it was archived instead of deleted. It no longer shows "
+            "up when making a sale."
         )
     db.execute("DELETE FROM products WHERE product_id = ?", (product_id,))
     audit.record("Product deleted", "product", product_id, product["name"])
