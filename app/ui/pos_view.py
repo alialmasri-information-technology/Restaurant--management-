@@ -865,6 +865,19 @@ class PosView(ctk.CTkFrame):
                 self, "Add something to the cart before taking payment.", "Nothing to sell"
             )
             return
+        # The discount box is parsed on every keystroke to keep the running
+        # total live, and a half-typed figure is not an error worth shouting
+        # about, so that path quietly treats what it cannot read as nothing.
+        # Taking the money is the other matter entirely: without this check a
+        # discount of "1O" would be dropped on the floor and the customer
+        # charged the full price, with nobody told. An empty box is still
+        # zero -- parse_amount says so -- so this only stops real rubbish.
+        try:
+            self.cart.discount = parse_amount(self.discount_var.get(), "discount")
+        except ValueError as exc:
+            show_error(self, exc, "Invalid discount")
+            return
+
         try:
             paid = parse_amount(self.paid_var.get(), "amount received")
         except ValueError as exc:

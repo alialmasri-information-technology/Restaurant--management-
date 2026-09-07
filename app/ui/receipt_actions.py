@@ -9,7 +9,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import filedialog
 
-from app import printing, receipts
+from app import logs, printing, receipts
 from app.services import sales as sales_service
 from app.services import settings as settings_service
 from app.ui import background
@@ -28,6 +28,10 @@ def open_file(path: Path) -> None:
         else:
             subprocess.run(["xdg-open", str(path)], check=False)
     except Exception:  # noqa: BLE001 - fall back to the browser's PDF viewer
+        # The browser is a fair second choice, but if the desktop could not
+        # open its own PDF that is worth knowing when someone reports that
+        # receipts "open in the wrong place".
+        logs.warning("Could not open %s with the desktop viewer", path, exc_info=True)
         webbrowser.open(path.as_uri())
 
 

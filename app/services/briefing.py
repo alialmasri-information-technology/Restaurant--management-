@@ -20,7 +20,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from app import config, db
+from app import config, db, logs
 from app.money import fmt_usd
 
 #: How stale a backup has to be before it is worth mentioning.
@@ -182,6 +182,12 @@ def _housekeeping(now: dt.datetime) -> list[Note]:
         try:
             last = dt.datetime.strptime(entries[0]["taken_at"], "%Y-%m-%d %H:%M")
         except (ValueError, KeyError):  # pragma: no cover - a hand-edited folder
+            # Bailing out here drops the "your last backup is old" warning
+            # entirely, so the one screen that would have told the shop its
+            # backups had stopped goes quiet. Leave a trace.
+            logs.warning(
+                "Could not read the time of the newest backup, so its age was not checked"
+            )
             return notes
         days = (now - last).days
         if days >= BACKUP_STALE_DAYS:

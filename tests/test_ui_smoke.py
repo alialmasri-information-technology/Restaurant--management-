@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 import unittest
 
-from app import config
+from app import config, db
 from app.services import customers as customers_service
 from app.services import products as products_service
 from app.services import sales as sales_service
@@ -207,6 +207,90 @@ class StockTakeScreenTests(DatabaseTestCase):
 
         line = stocktake_service.list_items(self.take_id)[0]
         self.assertEqual(line["counted_qty"], 1)
+
+
+@unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
+class TillMoneyInputTests(DatabaseTestCase):
+    """A figure the till cannot read must never be quietly treated as nothing."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.product_id = products_service.create_product(
+            sku="TILL-1", name="Sellable", price_usd=10, cost_usd=4, stock_qty=5
+        )
+        self.root = ctk.CTk()
+        self.root.withdraw()
+        self.addCleanup(lambda: _tear_down(self.root))
+
+    def _till(self):
+        from app.ui.shell import AppShell
+
+        shell = AppShell(self.root, self.admin, lambda: None)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.show("pos")
+        self.root.update_idletasks()
+        view = shell._views["pos"]
+        view._add_product(products_service.get_product(self.product_id))
+        self.root.update_idletasks()
+        return view
+
+    def _complete(self, view):
+        """Take payment with the two things that would talk to a person stubbed.
+
+        ``offer_receipt`` puts a modal question on screen and then opens a PDF;
+        neither belongs in a test run, and a dialog waiting for a click would
+        hang the suite.
+        """
+        import app.ui.pos_view as pos_view
+
+        errors = []
+        original_error, original_receipt = pos_view.show_error, pos_view.offer_receipt
+        pos_view.show_error = lambda *args, **kwargs: errors.append(args)
+        pos_view.offer_receipt = lambda *args, **kwargs: None
+        try:
+            view._complete_sale()
+        finally:
+            pos_view.show_error = original_error
+            pos_view.offer_receipt = original_receipt
+        self.root.update_idletasks()
+        return errors
+
+    def test_an_unreadable_discount_stops_the_sale_instead_of_being_dropped(self):
+        """The bug: "1O" became a $0 discount and the customer paid full price.
+
+        The running total is parsed on every keystroke and must stay quiet
+        about half-typed input, so the check that matters is the one taken
+        when the money changes hands.
+        """
+        view = self._till()
+        view.discount_var.set("1O")       # a letter O, as typed by a person
+        view.paid_var.set("100")
+
+        errors = self._complete(view)
+
+        self.assertEqual(len(errors), 1, "the cashier should have been told")
+        self.assertEqual(
+            db.scalar("SELECT COUNT(*) FROM sales", default=0), 0,
+            "no sale may be recorded when the discount could not be read",
+        )
+
+    def test_a_blank_discount_is_still_simply_nothing(self):
+        view = self._till()
+        view.discount_var.set("")
+        view.paid_var.set("100")
+
+        self.assertEqual(self._complete(view), [])
+        self.assertEqual(db.scalar("SELECT COUNT(*) FROM sales", default=0), 1)
+
+    def test_a_readable_discount_is_taken_off(self):
+        view = self._till()
+        view.discount_var.set("2.50")
+        view.paid_var.set("100")
+
+        self.assertEqual(self._complete(view), [])
+        self.assertAlmostEqual(
+            db.scalar("SELECT discount_usd FROM sales", default=0), 2.50, places=2
+        )
 
 
 @unittest.skipUnless(HAS_DISPLAY, "no display available for Tk")
