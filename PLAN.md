@@ -5,24 +5,34 @@ system: packaged, responsive on any database size, and self-maintaining.
 
 Work proceeds in phases; each one ends with the full test suite and ruff green.
 
-## Phase 1 — Performance and correctness pass
+## Phase 1 — Performance and correctness pass — complete
 
 1. ~~Sargable date filters + missing indexes~~ — done. Every date query now
    compares the raw ISO timestamp instead of wrapping the column in `date()`,
    and the ledger, sale/purchase lines, supplier and returns indexes exist.
 2. ~~Debounced search + cached till settings~~ — done. Search boxes wait for a
    quiet moment; the till reads the exchange rate once per refresh.
-3. CSV import: preload the SKU→product map so `analyse` stops issuing one
-   joined query per row of the supplier's file.
-4. Stock take: index the count sheet in memory so a scan stops re-reading and
-   re-rendering the entire worksheet per barcode.
-5. Bounded lists and N+1 removals: LIMIT on the POS/products/customers
-   listings with a "showing the first N" note; rewrite the correlated
-   subqueries in `list_customers`, `_SALE_SELECT` and the supplier roll-ups as
-   aggregate JOINs.
-6. Housekeeping: prune stale `login_throttle` rows, abandoned parked sales and
+3. ~~CSV import: preload the SKU→product map so `analyse` stops issuing one
+   joined query per row of the supplier's file~~ — done. The catalogue is read
+   once before the rows are walked.
+4. ~~Stock take: index the count sheet in memory so a scan stops re-reading and
+   re-rendering the entire worksheet per barcode~~ — done. The sheet is held in
+   memory and keyed by product, the totals are added up from that cache rather
+   than re-queried, and a scan rewrites the one row it changed instead of
+   rebuilding the table (`DataTable.update_row`). A filter that the line has
+   just left still rebuilds, because the row has to leave the list.
+5. ~~Bounded lists and N+1 removals~~ — done. The correlated subqueries in
+   `list_customers`, `_SALE_SELECT` and the supplier roll-ups are aggregate
+   JOINs, and the products, customers and suppliers listings stop at
+   `db.LIST_LIMIT` rows. The cap is visible: `db.query_limited` fetches one row
+   more than it needs, and a list that was cut short says so under the table.
+   Exports, the reorder list and the pickers that must be complete pass
+   `limit=None`.
+6. ~~Housekeeping: prune stale `login_throttle` rows, abandoned parked sales and
    receipt PDFs past a retention setting; audit and inventory logs trimmed to a
-   configurable age.
+   configurable age~~ — done. The stock movement history was the last of the
+   five and is now trimmed on the same terms as the rest: kept for ever unless
+   an administrator names a number of days.
 
 ## Phase 2 — Heavy work off the UI thread
 
@@ -31,9 +41,9 @@ Work proceeds in phases; each one ends with the full test suite and ruff green.
   outcomes delivered on the UI thread~~ — done.
 - ~~Restore stays on the UI thread by design (it owns the calling thread's
   connection) and marks the window busy~~ — done.
-- Remaining: a busy cursor around the CSV import modal while `analyse` and
-  `apply` run, should a supplier file ever grow past what a transaction
-  commits in a blink.
+- ~~A busy cursor around the CSV import modal while `analyse` and `apply`
+  run~~ — done. The cursor is released before any error dialog, so a failure
+  is never reported under a busy pointer.
 
 ## Phase 3 — Desktop packaging and first-run experience
 

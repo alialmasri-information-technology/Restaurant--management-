@@ -336,7 +336,8 @@ def _supplier_id(name: str) -> int | None:
 
 def export_products(path, include_inactive: bool = True) -> int:
     """Write the catalogue to a CSV the importer can read back. Returns row count."""
-    rows = products_service.list_products(include_inactive=include_inactive)
+    # An export is the whole catalogue by definition.
+    rows = products_service.list_products(include_inactive=include_inactive, limit=None)
     path = Path(path)
     try:
         with path.open("w", encoding="utf-8-sig", newline="") as handle:

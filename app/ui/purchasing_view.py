@@ -153,7 +153,7 @@ class PurchasingView(ctk.CTkFrame):
         }.get(row["status"], ())
 
     def new_order(self) -> None:
-        suppliers = suppliers_service.list_suppliers()
+        suppliers = suppliers_service.list_suppliers(limit=None)
         if not suppliers:
             show_error(
                 self, "Add a supplier before raising a purchase order.", "No suppliers"

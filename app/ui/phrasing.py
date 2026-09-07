@@ -185,3 +185,19 @@ def name_or(value, fallback: str = "Walk-in") -> str:
     """A missing customer is a walk-in, not a blank cell."""
     text = str(value or "").strip()
     return text or fallback
+
+
+def truncation_note(rows) -> str:
+    """"Showing the first 500. Search to narrow it down." — or nothing at all.
+
+    Long lists are capped so a screen does not spend a second building rows
+    nobody scrolls to. A cap the person cannot see is a lie, though: they would
+    have no way of knowing the customer they are looking for is simply past the
+    end. So the list says where it stops, and what to do about it.
+    """
+    if not getattr(rows, "truncated", False):
+        return ""
+    return (
+        f"Showing the first {len(rows):,}. "
+        "Search or filter to find what is not on this list."
+    )

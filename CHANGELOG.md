@@ -5,6 +5,46 @@ All notable changes to RE4 are recorded here. Versions follow
 database needs a migration it cannot undo, the minor when features are added,
 the patch for fixes.
 
+## [Unreleased]
+
+No schema change. The shop behaves as it did; it stops slowing down as its
+records pile up.
+
+### Changed
+
+**Long lists stop at 500 rows, and say so.** A shop that has traded for years
+holds tens of thousands of products and customers. Nobody reads the
+twelve-thousandth row, but the screen still built it, one widget at a time,
+every time the list refreshed. The products, customers and suppliers listings
+now stop at the first 500 and print a line under the table saying where they
+stopped and to search for the rest. A cap the person cannot see would be a
+lie: they would have no way of knowing the customer they wanted was simply
+past the end.
+
+The lists that must be whole still are. Exports write the entire catalogue and
+every customer, the reorder list sees every product below its level, and the
+menus you pick a customer or a supplier from hold all of them — those callers
+ask for no limit, and a test holds them to it.
+
+**A stock take stops re-reading itself.** The count sheet was already held in
+memory; finding a scanned line still walked it from the top, the totals were
+re-queried from the database after every barcode, and the whole worksheet was
+rebuilt to change one number. On a thousand-line count that was a round trip
+and a thousand rows per scan. The sheet is now keyed by product, the totals
+are added up from the copy already in hand, and a scan rewrites the single row
+it changed. Filtering to "not counted yet" still rebuilds the list, because a
+line that has just been counted has to leave it.
+
+**The stock movement history can be trimmed.** It grows by a row for every
+line sold, which makes it the fastest-growing table in the file. Settings →
+Data safety takes a number of days for it, on the same terms as the audit log
+and the receipts: kept for ever unless you name one, because knowing where the
+stock went a year ago is worth more than the disk space.
+
+**The CSV import shows a busy cursor** while it reads a supplier's file and
+while it writes the rows. The cursor is released before any error dialog, so a
+failure is never reported under a busy pointer.
+
 ## [2.6.0] — 2026-09-06
 
 Schema v5, v6 and v7 — all additive: an existing shop database gains nullable

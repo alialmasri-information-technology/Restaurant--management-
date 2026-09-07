@@ -13,7 +13,7 @@ from app.services import catalog_io
 from app.services import products as products_service
 from app.services import settings as settings_service
 from app.services import suppliers as suppliers_service
-from app.ui import phrasing, theme
+from app.ui import background, phrasing, theme
 from app.ui.receipt_actions import open_file
 from app.ui.shell import PageHeader
 from app.ui.widgets import (
@@ -381,7 +381,7 @@ class ProductsView(ctk.CTkFrame):
 
     def refresh(self) -> None:
         self._categories = list(products_service.list_categories())
-        self._suppliers = list(suppliers_service.list_suppliers())
+        self._suppliers = list(suppliers_service.list_suppliers(limit=None))
         values = [ALL_CATEGORIES] + [c["name"] for c in self._categories]
         self.category_menu.configure(values=values)
         if self.category_var.get() not in values:
@@ -737,13 +737,23 @@ class CatalogueModal(Modal):
         )
         if not chosen:
             return
+        # A supplier's file is read, and every row checked against the
+        # catalogue, before anything appears. That is quick on the hundred-line
+        # files this usually sees and long enough to look frozen on a big one.
+        background.busy(self)
         try:
             self.plan = catalog_io.analyse(chosen)
+            failure = None
         except catalog_io.ImportError_ as exc:
+            failure = exc
+        finally:
+            background.settled(self)
+
+        if failure is not None:
             self.plan = None
             self.import_button.configure(state="disabled")
             self.preview.set_rows([])
-            show_error(self, exc, "Could not read the file")
+            show_error(self, failure, "Could not read the file")
             return
 
         self.preview.set_rows(
@@ -780,11 +790,18 @@ class CatalogueModal(Modal):
             "Import catalogue",
         ):
             return
+        background.busy(self)
         try:
             result = catalog_io.apply(self.plan, self.shell.user.user_id)
+            failure = None
         except Exception as exc:  # noqa: BLE001 - the import rolled back
+            failure = exc
+        finally:
+            background.settled(self)
+
+        if failure is not None:
             show_error(
-                self, f"{exc}\n\nNothing was imported.", "Import failed"
+                self, f"{failure}\n\nNothing was imported.", "Import failed"
             )
             return
 

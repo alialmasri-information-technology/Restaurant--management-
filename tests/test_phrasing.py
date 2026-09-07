@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import unittest
 
+from app import db
 from app.ui import phrasing
 
 NOW = dt.datetime(2026, 9, 4, 17, 42, 0)
@@ -199,3 +200,22 @@ class Text(unittest.TestCase):
         self.assertEqual(phrasing.name_or(None), "Walk-in")
         self.assertEqual(phrasing.name_or("  "), "Walk-in")
         self.assertEqual(phrasing.name_or("Cafe Nadia"), "Cafe Nadia")
+
+
+class Truncation(unittest.TestCase):
+    """A capped list has to admit it, and an uncapped one has to stay quiet."""
+
+    def test_a_plain_list_says_nothing(self):
+        self.assertEqual(phrasing.truncation_note(["a", "b"]), "")
+
+    def test_a_list_that_fitted_says_nothing(self):
+        rows = db.RowList(["a", "b"])
+        rows.truncated = False
+        self.assertEqual(phrasing.truncation_note(rows), "")
+
+    def test_a_capped_list_says_how_far_it_got_and_what_to_do(self):
+        rows = db.RowList(range(500))
+        rows.truncated = True
+        note = phrasing.truncation_note(rows)
+        self.assertIn("first 500", note)
+        self.assertIn("Search", note)

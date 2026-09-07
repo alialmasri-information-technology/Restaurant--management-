@@ -210,6 +210,45 @@ def list_items(
     )
 
 
+def summarise(rows) -> dict:
+    """The same figures as :func:`summary`, from worksheet rows already in hand.
+
+    The counting screen holds the whole sheet in memory and patches it as each
+    barcode arrives. Asking the database to re-total a thousand lines after
+    every scan is a round trip to learn what the screen already knows, so the
+    totals are added up here instead. :func:`summary` remains the answer for
+    anyone who has the count's id and not its lines; a test holds the two to
+    the same result.
+    """
+    data = {
+        "line_count": 0,
+        "counted_lines": 0,
+        "net_units": 0,
+        "surplus_units": 0,
+        "shortage_units": 0,
+        "variance_lines": 0,
+        "net_value": 0.0,
+    }
+    for row in rows:
+        data["line_count"] += 1
+        counted = row["counted_qty"]
+        if counted is None:
+            continue
+        expected = row["expected_qty"]
+        data["counted_lines"] += 1
+        difference = counted - expected
+        data["net_units"] += difference
+        if difference > 0:
+            data["surplus_units"] += difference
+        elif difference < 0:
+            data["shortage_units"] += -difference
+        if difference:
+            data["variance_lines"] += 1
+        data["net_value"] += difference * row["cost_usd"]
+    data["uncounted_lines"] = data["line_count"] - data["counted_lines"]
+    return data
+
+
 def summary(stock_take_id: int) -> dict:
     """Progress and variance for one count, in units and at cost."""
     row = db.query_one(
